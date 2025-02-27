@@ -68,7 +68,7 @@ export const Web3AuthProvider = ({ children }: { children: ReactNode }) => {
         const chainConfig = {
           chainNamespace: CHAIN_NAMESPACES.EIP155,
           chainId: "0x1", // Ethereum mainnet
-          rpcTarget: "https://rpc.ankr.com/eth", // Public RPC target
+          rpcTarget: "https://ethereum.publicnode.com", // Updated to a more reliable RPC endpoint
           displayName: "Ethereum Mainnet",
           blockExplorer: "https://etherscan.io",
           ticker: "ETH",

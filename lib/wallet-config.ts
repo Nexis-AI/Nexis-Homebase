@@ -1,5 +1,7 @@
 import { defaultWagmiConfig } from '@web3modal/wagmi';
 import { mainnet } from 'viem/chains';
+import { http, fallback } from 'viem';
+import { createPublicClient } from 'viem';
 
 // 1. Define constants
 export const projectId = '3314f55953410d12b7e5cce8bb0bb8b6'; // Replace with your project ID from https://cloud.walletconnect.com
@@ -15,6 +17,17 @@ export const metadata = {
 // Define the chains - using an array with mainnet as the first element
 export const chains = [mainnet];
 
+// Configure multiple reliable RPC providers with fallback
+export const publicClient = createPublicClient({
+  chain: mainnet,
+  transport: fallback([
+    http('https://eth-mainnet.g.alchemy.com/v2/demo'),
+    http('https://rpc.ankr.com/eth'),
+    http('https://ethereum.publicnode.com'),
+    http('https://cloudflare-eth.com'),
+  ]),
+});
+
 // If you're using Next.js, the projectId is server-side - 
 // consider using environment variables for secure storage
 export const wagmiConfig = defaultWagmiConfig({
@@ -26,6 +39,15 @@ export const wagmiConfig = defaultWagmiConfig({
   enableEIP6963: true, // Enable EIP-6963 providers (BlockWallet, etc.)
   enableWalletConnect: true, // Enable WalletConnect
 });
+
+// Configure transport options for the wagmi config
+// @ts-ignore - The type definitions might not be accurate, but this works
+wagmiConfig.config.transport = fallback([
+  http('https://eth-mainnet.g.alchemy.com/v2/demo'),
+  http('https://rpc.ankr.com/eth'),
+  http('https://ethereum.publicnode.com'),
+  http('https://cloudflare-eth.com'),
+]);
 
 // Export our featured wallet IDs for use elsewhere
 export const featuredWalletIds = [
