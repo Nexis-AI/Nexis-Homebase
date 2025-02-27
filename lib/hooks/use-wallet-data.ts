@@ -76,6 +76,36 @@ export interface WalletData {
   customTokens: TokenInfo[];
 }
 
+// Helper function to format market cap
+function formatMarketCap(marketCap?: number): string {
+  if (!marketCap) return 'N/A';
+  if (marketCap >= 1_000_000_000_000) {
+    return `${(marketCap / 1_000_000_000_000).toFixed(2)}T`;
+  }
+  if (marketCap >= 1_000_000_000) {
+    return `${(marketCap / 1_000_000_000).toFixed(2)}B`;
+  }
+  if (marketCap >= 1_000_000) {
+    return `${(marketCap / 1_000_000).toFixed(2)}M`;
+  }
+  return `${(marketCap / 1_000).toFixed(2)}K`;
+}
+
+// Helper function to format volume
+function formatVolume(volume?: number): string {
+  if (!volume) return 'N/A';
+  if (volume >= 1_000_000_000_000) {
+    return `${(volume / 1_000_000_000_000).toFixed(2)}T`;
+  }
+  if (volume >= 1_000_000_000) {
+    return `${(volume / 1_000_000_000).toFixed(2)}B`;
+  }
+  if (volume >= 1_000_000) {
+    return `${(volume / 1_000_000).toFixed(2)}M`;
+  }
+  return `${(volume / 1_000).toFixed(2)}K`;
+}
+
 // Sample token list with metadata for Ethereum mainnet
 const TOKENS = {
   ETH: {
@@ -185,36 +215,6 @@ export function useWalletData(): WalletData {
     });
   };
 
-  // Helper function to format market cap
-  function formatMarketCap(marketCap?: number): string {
-    if (!marketCap) return 'N/A';
-    if (marketCap >= 1_000_000_000_000) {
-      return `${(marketCap / 1_000_000_000_000).toFixed(2)}T`;
-    }
-    if (marketCap >= 1_000_000_000) {
-      return `${(marketCap / 1_000_000_000).toFixed(2)}B`;
-    }
-    if (marketCap >= 1_000_000) {
-      return `${(marketCap / 1_000_000).toFixed(2)}M`;
-    }
-    return `${(marketCap / 1_000).toFixed(2)}K`;
-  }
-
-  // Helper function to format volume
-  function formatVolume(volume?: number): string {
-    if (!volume) return 'N/A';
-    if (volume >= 1_000_000_000_000) {
-      return `${(volume / 1_000_000_000_000).toFixed(2)}T`;
-    }
-    if (volume >= 1_000_000_000) {
-      return `${(volume / 1_000_000_000).toFixed(2)}B`;
-    }
-    if (volume >= 1_000_000) {
-      return `${(volume / 1_000_000).toFixed(2)}M`;
-    }
-    return `${(volume / 1_000).toFixed(2)}K`;
-  }
-
   // Function to fetch and process wallet data
   const fetchWalletData = useCallback(async () => {
     if (!isConnected || !address) {
@@ -243,7 +243,7 @@ export function useWalletData(): WalletData {
 
       if (ethBalance) {
         // Process ETH balance
-        const ethPriceData = tokenPrices['eth'] || getTokenPriceFallback('eth');
+        const ethPriceData = tokenPrices.eth || getTokenPriceFallback('eth');
         const ethPrice = ethPriceData.current_price || 3500;
         const ethValue = Number(formatUnits(ethBalance.value, 18)) * ethPrice;
         
@@ -261,7 +261,7 @@ export function useWalletData(): WalletData {
 
       // USDC - mock balance
       const usdcBalance = BigInt(5000_000000); // 5,000 USDC with 6 decimals
-      const usdcPriceData = tokenPrices['usdc'] || getTokenPriceFallback('usdc');
+      const usdcPriceData = tokenPrices.usdc || getTokenPriceFallback('usdc');
       tokenBalances.push({
         token: TOKENS.USDC,
         balance: usdcBalance,
@@ -275,7 +275,7 @@ export function useWalletData(): WalletData {
       
       // USDT - mock balance
       const usdtBalance = BigInt(2500_000000); // 2,500 USDT with 6 decimals
-      const usdtPriceData = tokenPrices['usdt'] || getTokenPriceFallback('usdt');
+      const usdtPriceData = tokenPrices.usdt || getTokenPriceFallback('usdt');
       tokenBalances.push({
         token: TOKENS.USDT,
         balance: usdtBalance,
@@ -289,7 +289,7 @@ export function useWalletData(): WalletData {
       
       // WBTC - mock balance
       const wbtcBalance = BigInt(25_000000); // 0.25 WBTC with 8 decimals
-      const wbtcPriceData = tokenPrices['wbtc'] || getTokenPriceFallback('wbtc');
+      const wbtcPriceData = tokenPrices.wbtc || getTokenPriceFallback('wbtc');
       tokenBalances.push({
         token: TOKENS.WBTC,
         balance: wbtcBalance,
@@ -437,7 +437,15 @@ export function useWalletData(): WalletData {
     } finally {
       setIsLoading(false);
     }
-  }, [address, isConnected, chainId, ethBalance, refetchEthBalance, tokenPrices, customTokens]);
+  }, [
+    address, 
+    isConnected, 
+    chainId, 
+    ethBalance, 
+    refetchEthBalance, 
+    tokenPrices, 
+    customTokens
+  ]);
 
   // Fetch data when wallet connection changes
   useEffect(() => {
