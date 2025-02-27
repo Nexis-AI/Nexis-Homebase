@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useEffect, useCallback } from 'react';
-import { useAccount, useBalance } from 'wagmi';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useAccount, useBalance, usePublicClient } from 'wagmi';
 import { formatUnits } from 'viem';
 import { useChainId } from 'wagmi';
 import { mainnet } from 'viem/chains';
 import { useTokenPrices, getTokenPriceFallback } from './use-token-prices';
 import { useLocalStorage } from './use-local-storage';
+import type { Hash } from 'viem';
 
 // Interfaces for token balances
 export interface TokenInfo {
@@ -147,10 +148,12 @@ const TOKENS = {
 
 /**
  * Hook to fetch and manage wallet data including balances, transactions, and approvals
+ * Optimized for production with retry limits and automatic updates on transactions
  */
 export function useWalletData(): WalletData {
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
+  const publicClient = usePublicClient();
   const [isLoading, setIsLoading] = useState(true);
   const [tokens, setTokens] = useState<TokenBalance[]>([]);
   const [portfolio, setPortfolio] = useState<PortfolioStats>({
@@ -164,6 +167,54 @@ export function useWalletData(): WalletData {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [ensName, setEnsName] = useState<string | undefined>(undefined);
+  
+  // Add retry counter ref to limit retry attempts
+  const retryCount = useRef(0);
+  const maxRetries = 3;
+  
+  // Watch for new transactions to trigger updates
+  useEffect(() => {
+    if (!isConnected || !address || !publicClient) return;
+    
+    // Setup transaction listener
+    const unwatch = publicClient.watchPendingTransactions({
+      onTransactions: (hashes: Hash[]) => {
+        console.log('New pending transactions detected:', hashes);
+        // Reset retry counter when a new transaction is detected
+        retryCount.current = 0;
+        // Trigger a balance refresh when a new transaction is detected
+        fetchWalletData();
+      },
+    });
+    
+    // Cleanup function
+    return () => {
+      unwatch();
+    };
+  }, [address, isConnected, publicClient]);
+  
+  // Handle ENS resolution with error handling
+  useEffect(() => {
+    const getEnsName = async () => {
+      if (!address || chainId !== mainnet.id || !publicClient) {
+        setEnsName(undefined);
+        return;
+      }
+      
+      try {
+        const name = await publicClient.getEnsName({
+          address,
+        });
+        // Handle null return value from getEnsName
+        setEnsName(name || undefined);
+      } catch (error) {
+        console.warn('Error fetching ENS name:', error instanceof Error ? error.message : 'Unknown error');
+        setEnsName(undefined);
+      }
+    };
+    
+    getEnsName();
+  }, [address, chainId, publicClient]);
   
   // Generate a wallet-specific storage key to keep custom tokens separate per wallet
   const walletKey = address ? `nexis-custom-tokens-${address.toLowerCase()}` : 'nexis-custom-tokens';
@@ -182,10 +233,17 @@ export function useWalletData(): WalletData {
   
   // Fetch real-time prices
   const { prices: tokenPrices, refreshPrices } = useTokenPrices(tokenSymbols);
-
-  // Get ETH balance
+  
+  // Get ETH balance with optimized configuration
   const { data: ethBalance, refetch: refetchEthBalance } = useBalance({
     address,
+    query: {
+      enabled: Boolean(address) && isConnected,
+      staleTime: 30 * 1000, // Consider data stale after 30 seconds
+      gcTime: 5 * 60 * 1000, // Keep cached data for 5 minutes
+      retry: 2, // Retry twice (total of 3 attempts)
+      retryDelay: 1000, // 1 second between retries
+    }
   });
 
   // Function to add a custom token
@@ -234,15 +292,39 @@ export function useWalletData(): WalletData {
       return;
     }
 
+    // Check if we've exceeded the retry limit
+    if (retryCount.current >= maxRetries) {
+      console.warn(`Reached maximum retry attempts (${maxRetries}). Using cached or fallback data.`);
+      setIsLoading(false);
+      return;
+    }
+
     setIsLoading(true);
+    retryCount.current += 1;
 
     try {
       // Start with ETH balance
       console.log("Fetching ETH balance for", address);
-      const ethBalanceResult = await refetchEthBalance().catch(error => {
-        console.warn("Error fetching ETH balance:", error.message);
-        return null;
-      });
+      let ethBalanceResult = null;
+      
+      try {
+        ethBalanceResult = await refetchEthBalance();
+        // Reset retry counter on success
+        retryCount.current = 0;
+      } catch (error) {
+        console.warn("Error fetching ETH balance:", error instanceof Error ? error.message : 'Unknown error');
+        
+        // Only increment retry count for temporary errors
+        if (error instanceof Error && 
+            (error.message.includes('timeout') || 
+             error.message.includes('429') || 
+             error.message.includes('rate limit'))) {
+          console.log(`Retries remaining: ${maxRetries - retryCount.current}`);
+        } else {
+          // Don't count permanent errors against retry limit
+          retryCount.current -= 1;
+        }
+      }
       
       const tokenBalances: TokenBalance[] = [];
 
@@ -373,7 +455,7 @@ export function useWalletData(): WalletData {
       const weightedChange = tokenBalances.reduce(
         (sum, token) => sum + (token.change24h * token.value), 
         0
-      ) / totalValue;
+      ) / (totalValue || 1); // Prevent division by zero
       
       const change24hUSD = totalValue * (weightedChange / 100);
 
@@ -450,13 +532,6 @@ export function useWalletData(): WalletData {
         },
       ];
       setApprovals(mockApprovals);
-      
-      // Set mock ENS name if on mainnet
-      if (chainId === mainnet.id) {
-        setEnsName('nexis.eth');
-      } else {
-        setEnsName(undefined);
-      }
     } catch (error) {
       console.error('Error fetching wallet data:', error);
     } finally {
@@ -465,7 +540,6 @@ export function useWalletData(): WalletData {
   }, [
     address, 
     isConnected, 
-    chainId, 
     refetchEthBalance, 
     tokenPrices, 
     customTokens
@@ -473,6 +547,8 @@ export function useWalletData(): WalletData {
 
   // Fetch data when wallet connection changes
   useEffect(() => {
+    // Reset retry counter when dependencies change
+    retryCount.current = 0;
     fetchWalletData();
   }, [fetchWalletData]);
 
@@ -486,6 +562,8 @@ export function useWalletData(): WalletData {
     transactions,
     approvals,
     refetch: async () => {
+      // Reset retry counter on manual refresh
+      retryCount.current = 0;
       await refreshPrices();
       await fetchWalletData();
     },

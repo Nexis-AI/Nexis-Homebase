@@ -1,7 +1,8 @@
 import { defaultWagmiConfig } from '@web3modal/wagmi';
 import { mainnet } from 'viem/chains';
-import { http, fallback } from 'viem';
+import { http, fallback, createClient } from 'viem';
 import { createPublicClient } from 'viem';
+import { normalize } from 'viem/ens';
 
 // 1. Define constants
 // Use the environment variable for production deployment
@@ -45,19 +46,37 @@ const createTransport = (urls: string[]) => {
         credentials: 'omit',
         // Add cache control to avoid browser caching responses
         cache: 'no-cache',
-      }
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+        }
+      },
+      // Add retry mechanism
+      retryCount: 2,
+      retryDelay: 1000, // 1s between retries
     }))
   );
 };
 
-// Create public client with CORS-compatible settings
+// Create public client with CORS-compatible settings and better error handling
 export const publicClient = createPublicClient({
   chain: mainnet,
   transport: createTransport(PUBLIC_RPC_URLS.mainnet),
   batch: {
     multicall: true, // Enable multicall to reduce number of requests
   },
+  pollingInterval: 4000, // 4s polling interval
+  // Handle ENS errors gracefully
+  cacheTime: 50_000, // 50s cache time (to reduce API calls)
 });
+
+// ENS resolution parameters - with safe defaults
+export const ensConfig = {
+  universalResolverAddress: '0x9C4c246Bd8F1D6e33e439C53B19c64F33d795aBF', // ENS Universal Resolver
+  resolverMaxAge: 300_000, // 5 minutes cache for resolvers
+  timeout: 10_000, // 10s timeout for ENS operations
+  retryCount: 1, // Only retry once for ENS operations
+};
 
 // Create transport for the wagmi config
 const transport = createTransport(PUBLIC_RPC_URLS.mainnet);
