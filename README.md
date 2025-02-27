@@ -88,19 +88,29 @@ If a valid WalletConnect Project ID is not set, the application will fall back t
 
 The application is configured with multiple fallback RPC providers for maximum reliability:
 
-1. Alchemy (primary provider with customizable API key)
-2. Ankr's public endpoint
-3. Public Node's Ethereum endpoint 
-4. Cloudflare's Ethereum endpoint
+1. Blast API (Public Gateway) - CORS-enabled
+2. PublicNode's Ethereum endpoint - CORS-enabled 
+3. 1RPC Ethereum endpoint - CORS-enabled
+4. MEV Blocker RPC - CORS-enabled
+5. Flashbots RPC - CORS-enabled
 
-For production deployments, it's recommended to:
+We've specifically selected public RPC endpoints that support CORS for browser-based applications.
 
-1. Get your own API key from [Alchemy](https://www.alchemy.com/) or [Infura](https://infura.io/)
-2. Add it to your environment variables:
+For production deployments, we recommend:
 
-```
-NEXT_PUBLIC_ALCHEMY_API_KEY=your_alchemy_api_key
-```
+1. Setting up your own RPC proxy server that forwards requests to Ethereum nodes
+2. Using a dedicated provider like Alchemy or Infura with an API key
+3. Configuring proper CORS headers if you're self-hosting an Ethereum node
+
+#### Common RPC Connection Issues
+
+If you encounter RPC connection issues:
+
+- **CORS Errors**: Browser-based apps can only connect to RPC endpoints that have CORS headers enabled
+- **Rate Limiting**: Public RPC endpoints often have strict rate limits and may return 429 errors
+- **Resource Limitations**: Free/public endpoints may return insufficient resource errors under load
+
+The application includes fallback and error handling to mitigate these issues.
 
 ### Advanced Wallet Configuration
 
