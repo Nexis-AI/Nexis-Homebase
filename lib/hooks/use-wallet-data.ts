@@ -238,10 +238,17 @@ export function useWalletData(): WalletData {
 
     try {
       // Start with ETH balance
-      await refetchEthBalance();
+      console.log("Fetching ETH balance for", address);
+      const ethBalanceResult = await refetchEthBalance().catch(error => {
+        console.warn("Error fetching ETH balance:", error.message);
+        return null;
+      });
+      
       const tokenBalances: TokenBalance[] = [];
 
-      if (ethBalance) {
+      if (ethBalanceResult?.data) {
+        console.log("ETH balance received:", ethBalanceResult.data);
+        const ethBalance = ethBalanceResult.data;
         // Process ETH balance
         const ethPriceData = tokenPrices.eth || getTokenPriceFallback('eth');
         const ethPrice = ethPriceData.current_price || 3500;
@@ -459,7 +466,6 @@ export function useWalletData(): WalletData {
     address, 
     isConnected, 
     chainId, 
-    ethBalance, 
     refetchEthBalance, 
     tokenPrices, 
     customTokens

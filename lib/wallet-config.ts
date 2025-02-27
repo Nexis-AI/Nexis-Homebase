@@ -9,7 +9,21 @@ export const projectId = process.env.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID ||
                          process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || 
                          'e6d95ba9bbef9f6f5130d40cf0a93c2b';
 
-// 2. Create wagmiConfig
+// List of public, CORS-enabled Ethereum RPC endpoints
+// For production, you should use a dedicated provider with higher rate limits
+const PUBLIC_RPC_URLS = {
+  // Public gateway endpoints that support CORS
+  mainnet: [
+    // Use the public endpoint from Alchemy that supports CORS for development
+    'https://eth-mainnet.public.blastapi.io',
+    'https://ethereum.publicnode.com',
+    'https://1rpc.io/eth',
+    'https://rpc.mevblocker.io',
+    'https://rpc.flashbots.net'
+  ]
+};
+
+// 2. Create metadata
 export const metadata = {
   name: 'Nexis Protocol',
   description: 'Nexis Dashboard - Secure Wallet Dashboard',
@@ -20,30 +34,33 @@ export const metadata = {
 // Define the chains - using an array with mainnet as the first element
 export const chains = [mainnet];
 
-// For production, use more reliable RPC endpoints with fallback
-// Consider adding your own Alchemy or Infura API key for better reliability
-const ALCHEMY_API_KEY = process.env.NEXT_PUBLIC_ALCHEMY_API_KEY || 'demo';
+// Configure RPC with public endpoints that support CORS
+const createTransport = (urls: string[]) => {
+  return fallback(
+    urls.map(url => http(url, {
+      timeout: 10000, // 10s timeout
+      fetchOptions: {
+        // Important: Include CORS mode and credentials for browser compatibility
+        mode: 'cors',
+        credentials: 'omit',
+        // Add cache control to avoid browser caching responses
+        cache: 'no-cache',
+      }
+    }))
+  );
+};
 
-// Configure multiple reliable RPC providers with fallback
+// Create public client with CORS-compatible settings
 export const publicClient = createPublicClient({
   chain: mainnet,
-  transport: fallback([
-    // Primary endpoint with your API key if available
-    http(`https://eth-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`),
-    // Fallbacks for reliability
-    http('https://rpc.ankr.com/eth'),
-    http('https://ethereum.publicnode.com'),
-    http('https://cloudflare-eth.com'),
-  ]),
+  transport: createTransport(PUBLIC_RPC_URLS.mainnet),
+  batch: {
+    multicall: true, // Enable multicall to reduce number of requests
+  },
 });
 
-// Create transport for reliable RPC connections
-const transport = fallback([
-  http(`https://eth-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`),
-  http('https://rpc.ankr.com/eth'),
-  http('https://ethereum.publicnode.com'),
-  http('https://cloudflare-eth.com'),
-]);
+// Create transport for the wagmi config
+const transport = createTransport(PUBLIC_RPC_URLS.mainnet);
 
 // Production-ready wagmiConfig with optimized settings
 export const wagmiConfig = defaultWagmiConfig({
