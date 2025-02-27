@@ -28,6 +28,14 @@ export const publicClient = createPublicClient({
   ]),
 });
 
+// Create fallback transport for reliable RPC connections
+const transport = fallback([
+  http('https://eth-mainnet.g.alchemy.com/v2/demo'),
+  http('https://rpc.ankr.com/eth'),
+  http('https://ethereum.publicnode.com'),
+  http('https://cloudflare-eth.com'),
+]);
+
 // If you're using Next.js, the projectId is server-side - 
 // consider using environment variables for secure storage
 export const wagmiConfig = defaultWagmiConfig({
@@ -38,16 +46,11 @@ export const wagmiConfig = defaultWagmiConfig({
   enableCoinbase: true, // Enable Coinbase Wallet
   enableEIP6963: true, // Enable EIP-6963 providers (BlockWallet, etc.)
   enableWalletConnect: true, // Enable WalletConnect
+  transports: {
+    // Set the fallback transport for each chain
+    [mainnet.id]: transport,
+  },
 });
-
-// Configure transport options for the wagmi config
-// @ts-ignore - The type definitions might not be accurate, but this works
-wagmiConfig.config.transport = fallback([
-  http('https://eth-mainnet.g.alchemy.com/v2/demo'),
-  http('https://rpc.ankr.com/eth'),
-  http('https://ethereum.publicnode.com'),
-  http('https://cloudflare-eth.com'),
-]);
 
 // Export our featured wallet IDs for use elsewhere
 export const featuredWalletIds = [

@@ -1,6 +1,7 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import { createContext, useContext, useState, useEffect } from "react";
+import type { ReactNode } from "react";
 import { Web3Auth } from "@web3auth/modal";
 import { CHAIN_NAMESPACES, WEB3AUTH_NETWORK } from "@web3auth/base";
 import type { IProvider } from "@web3auth/base";
@@ -113,7 +114,7 @@ export const Web3AuthProvider = ({ children }: { children: ReactNode }) => {
           setIsAuthenticated(true);
           
           if (provider) {
-            const ethersProvider = new ethers.BrowserProvider(provider as any);
+            const ethersProvider = new ethers.BrowserProvider(provider);
             const signer = await ethersProvider.getSigner();
             const address = await signer.getAddress();
             
@@ -147,7 +148,7 @@ export const Web3AuthProvider = ({ children }: { children: ReactNode }) => {
       setIsAuthenticated(true);
       
       if (provider) {
-        const ethersProvider = new ethers.BrowserProvider(provider as any);
+        const ethersProvider = new ethers.BrowserProvider(provider);
         const signer = await ethersProvider.getSigner();
         const address = await signer.getAddress();
         
