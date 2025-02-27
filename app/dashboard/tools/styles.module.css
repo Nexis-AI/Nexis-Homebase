@@ -1,0 +1,91 @@
+.networkCard {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(to bottom right, hsl(var(--card) / 0.5), hsl(var(--card) / 0.8));
+  backdrop-filter: blur(8px);
+}
+
+.networkCard::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  padding: 1px;
+  border-radius: inherit;
+  background: linear-gradient(135deg, hsl(var(--primary) / 0.5), transparent 50%, hsl(var(--primary) / 0.2));
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.networkCard:hover::before {
+  opacity: 1;
+}
+
+.codeBlock {
+  position: relative;
+  overflow-x: auto;
+}
+
+.codeBlock pre {
+  padding: 1rem;
+  border-radius: 0.5rem;
+  background: hsl(var(--muted));
+  font-family: "Fira Code", monospace;
+}
+
+.copyButton {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.codeBlock:hover .copyButton {
+  opacity: 1;
+}
+
+.resourceCard {
+  transition: all 0.3s ease;
+}
+
+.resourceCard:hover {
+  transform: translateY(-2px);
+}
+
+.resourceCard::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  padding: 1px;
+  border-radius: inherit;
+  background: linear-gradient(135deg, hsl(var(--primary) / 0.3), transparent);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+.badge {
+  position: relative;
+  overflow: hidden;
+}
+
+.badge::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(45deg, transparent, hsl(var(--primary) / 0.2), transparent);
+  animation: shine 2s infinite linear;
+}
+
+@keyframes shine {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+

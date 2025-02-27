@@ -1,0 +1,252 @@
+/* Previous styles remain... */
+
+/* Custom rank badges */
+.rankBadgeContainer {
+  position: relative;
+  width: 20px; /* Reduced from 40px */
+  height: 20px; /* Reduced from 40px */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.rankBadgeImage {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 0 10px rgba(100, 219, 255, 0.3));
+  transition: all 0.3s ease;
+}
+
+.rankBadgeText {
+  position: relative;
+  z-index: 1;
+  font-size: 0.75rem; /* Reduced from 0.875rem */
+  font-weight: 600;
+  color: hsl(var(--foreground));
+  text-shadow: 0 0 5px rgba(0, 0, 0, 0.3); /* Reduced shadow size */
+}
+
+/* Enhanced animations for top ranks */
+.tier1 .rankBadgeImage {
+  animation: float 3s ease-in-out infinite;
+}
+
+.tier2 .rankBadgeImage {
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.tier3 .rankBadgeImage {
+  animation: shine 3s ease-in-out infinite;
+}
+
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 10px rgba(100, 219, 255, 0.3));
+    transform: scale(1);
+  }
+  50% {
+    filter: drop-shadow(0 0 20px rgba(100, 219, 255, 0.5));
+    transform: scale(1.05);
+  }
+}
+
+@keyframes shine {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 10px rgba(100, 219, 255, 0.3));
+  }
+  50% {
+    filter: drop-shadow(0 0 15px rgba(100, 219, 255, 0.4));
+  }
+}
+
+/* Rank badge animations */
+.rankBadgeContainer:hover .rankBadgeImage {
+  transform: scale(1.1);
+  filter: drop-shadow(0 0 20px rgba(100, 219, 255, 0.5));
+}
+
+/* Rank tiers */
+.tier1 {
+  /* Diamond */
+  animation: pulse-diamond 2s infinite;
+}
+
+.tier2 {
+  /* Platinum */
+  animation: pulse-platinum 2s infinite;
+}
+
+.tier3 {
+  /* Gold */
+  animation: pulse-gold 2s infinite;
+}
+
+.tier4 {
+  /* Silver */
+  animation: pulse-silver 2s infinite;
+}
+
+.tier5 {
+  /* Bronze */
+  animation: pulse-bronze 2s infinite;
+}
+
+@keyframes pulse-diamond {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 10px rgba(147, 232, 255, 0.3));
+  }
+  50% {
+    filter: drop-shadow(0 0 20px rgba(147, 232, 255, 0.5));
+  }
+}
+
+@keyframes pulse-platinum {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 10px rgba(116, 228, 255, 0.3));
+  }
+  50% {
+    filter: drop-shadow(0 0 20px rgba(116, 228, 255, 0.5));
+  }
+}
+
+@keyframes pulse-gold {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 10px rgba(100, 219, 255, 0.3));
+  }
+  50% {
+    filter: drop-shadow(0 0 20px rgba(100, 219, 255, 0.5));
+  }
+}
+
+/* Enhanced table styles */
+.leaderboardTable {
+  position: relative;
+  overflow: hidden;
+}
+
+.leaderboardTable::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to right, transparent, rgba(100, 219, 255, 0.1), transparent);
+  pointer-events: none;
+}
+
+/* Row highlight effect */
+.leaderboardRow {
+  position: relative;
+  transition: all 0.3s ease;
+}
+
+.leaderboardRow:hover {
+  background: linear-gradient(to right, transparent, rgba(100, 219, 255, 0.05), transparent);
+}
+
+.leaderboardRow::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: linear-gradient(to right, transparent, rgba(100, 219, 255, 0.2), transparent);
+  transform: scaleX(0);
+  transition: transform 0.3s ease;
+}
+
+.leaderboardRow:hover::after {
+  transform: scaleX(1);
+}
+
+/* Stats card enhancements */
+.statsCard {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(135deg, hsl(var(--card) / 0.5), hsl(var(--card) / 0.8));
+  backdrop-filter: blur(10px);
+}
+
+.statsCard::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  padding: 1px;
+  border-radius: inherit;
+  background: linear-gradient(135deg, rgba(100, 219, 255, 0.5), transparent 50%, rgba(100, 219, 255, 0.2));
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+/* Performance indicators */
+.performanceUp {
+  color: hsl(var(--success));
+  animation: slide-up 0.3s ease;
+}
+
+.performanceDown {
+  color: hsl(var(--destructive));
+  animation: slide-down 0.3s ease;
+}
+
+@keyframes slide-up {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes slide-down {
+  from {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.achievementBadge {
+  border-radius: 0.5rem;
+  overflow: hidden;
+  transition: all 0.3s ease;
+}
+
+.legendary {
+  background: linear-gradient(135deg, rgba(255, 215, 0, 0.1), rgba(255, 215, 0, 0.2));
+  border: 1px solid rgba(255, 215, 0, 0.3);
+}
+
+.epic {
+  background: linear-gradient(135deg, rgba(147, 112, 219, 0.1), rgba(147, 112, 219, 0.2));
+  border: 1px solid rgba(147, 112, 219, 0.3);
+}
+
+.rare {
+  background: linear-gradient(135deg, rgba(0, 191, 255, 0.1), rgba(0, 191, 255, 0.2));
+  border: 1px solid rgba(0, 191, 255, 0.3);
+}
+

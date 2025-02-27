@@ -1,0 +1,103 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 7%;
+    --foreground: 0 0% 100%;
+    --card: 0 0% 12%;
+    --card-foreground: 0 0% 100%;
+    --popover: 0 0% 12%;
+    --popover-foreground: 0 0% 100%;
+    --primary: 210 40% 98%;
+    --primary-foreground: 240 5.9% 10%;
+    --secondary: 0 0% 15%;
+    --secondary-foreground: 0 0% 100%;
+    --muted: 0 0% 15%;
+    --muted-foreground: 0 0% 65%;
+    --accent: 0 0% 15%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 20%;
+    --input: 0 0% 20%;
+    --ring: transparent;
+    --radius: 0.5rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+@layer components {
+  /* Update the sidebar styles */
+  .sidebar {
+    @apply bg-card border-r border-border w-16 transition-all duration-300 ease-in-out hover:w-64 rounded-l-lg;
+  }
+
+  .sidebar-logo {
+    @apply relative flex h-16 items-center gap-4 border-b border-border px-3;
+  }
+
+  .sidebar-logo-text {
+    @apply absolute left-16 text-lg font-semibold tracking-tight opacity-0 transition-opacity duration-300 whitespace-nowrap;
+  }
+
+  .sidebar:hover .sidebar-logo-text {
+    @apply opacity-100 delay-100;
+  }
+
+  .nav-item {
+    @apply flex h-10 items-center gap-4 rounded-lg px-3 text-muted-foreground transition-all duration-200 hover:bg-secondary hover:text-foreground relative border-b border-border/10;
+  }
+
+  .nav-item.active {
+    @apply bg-secondary text-foreground border-primary;
+  }
+
+  .nav-item-text {
+    @apply absolute left-16 text-sm font-medium opacity-0 transition-opacity duration-300 whitespace-nowrap;
+  }
+
+  .sidebar:hover .nav-item-text {
+    @apply opacity-100 delay-100;
+  }
+
+  /* Container scaling */
+  .container {
+    @apply w-full mx-auto;
+    max-width: min(100%, 1400px);
+  }
+
+  /* Card scaling */
+  .card-grid {
+    @apply grid gap-4;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  }
+}
+
+/* Animation for gradient background */
+@keyframes gradient {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.animate-gradient {
+  background-size: 200% 200%;
+  animation: gradient 15s ease infinite;
+}
+
