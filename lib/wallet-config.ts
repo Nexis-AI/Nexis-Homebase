@@ -4,52 +4,62 @@ import { http, fallback } from 'viem';
 import { createPublicClient } from 'viem';
 
 // 1. Define constants
-export const projectId = '3314f55953410d12b7e5cce8bb0bb8b6'; // Replace with your project ID from https://cloud.walletconnect.com
+// Use the environment variable for production deployment
+export const projectId = process.env.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID || 
+                         process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || 
+                         'e6d95ba9bbef9f6f5130d40cf0a93c2b';
 
 // 2. Create wagmiConfig
 export const metadata = {
   name: 'Nexis Protocol',
-  description: 'Nexis Dashboard',
-  url: 'https://nexisnetwork.io', // Origin must be added to allowed origins list in the WalletConnect Cloud
+  description: 'Nexis Dashboard - Secure Wallet Dashboard',
+  url: typeof window !== 'undefined' ? window.location.origin : 'https://nexisnetwork.io',
   icons: ['https://hebbkx1anhila5yf.public.blob.vercel-storage.com/Nexis-Profile-Photo%20(1)%201-8LcRo5KayRrYjaJWdzJIkA1fdh4YZF.png']
 };
 
 // Define the chains - using an array with mainnet as the first element
 export const chains = [mainnet];
 
+// For production, use more reliable RPC endpoints with fallback
+// Consider adding your own Alchemy or Infura API key for better reliability
+const ALCHEMY_API_KEY = process.env.NEXT_PUBLIC_ALCHEMY_API_KEY || 'demo';
+
 // Configure multiple reliable RPC providers with fallback
 export const publicClient = createPublicClient({
   chain: mainnet,
   transport: fallback([
-    http('https://eth-mainnet.g.alchemy.com/v2/demo'),
+    // Primary endpoint with your API key if available
+    http(`https://eth-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`),
+    // Fallbacks for reliability
     http('https://rpc.ankr.com/eth'),
     http('https://ethereum.publicnode.com'),
     http('https://cloudflare-eth.com'),
   ]),
 });
 
-// Create fallback transport for reliable RPC connections
+// Create transport for reliable RPC connections
 const transport = fallback([
-  http('https://eth-mainnet.g.alchemy.com/v2/demo'),
+  http(`https://eth-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`),
   http('https://rpc.ankr.com/eth'),
   http('https://ethereum.publicnode.com'),
   http('https://cloudflare-eth.com'),
 ]);
 
-// If you're using Next.js, the projectId is server-side - 
-// consider using environment variables for secure storage
+// Production-ready wagmiConfig with optimized settings
 export const wagmiConfig = defaultWagmiConfig({
-  chains: [mainnet], // Pass the chain directly here
+  chains: [mainnet],
   projectId,
   metadata,
-  enableInjected: true, // Enable injected connectors (MetaMask, OKX, etc.)
-  enableCoinbase: true, // Enable Coinbase Wallet
-  enableEIP6963: true, // Enable EIP-6963 providers (BlockWallet, etc.)
-  enableWalletConnect: true, // Enable WalletConnect
+  enableInjected: true,
+  enableCoinbase: true,
+  enableEIP6963: true,
+  enableWalletConnect: true,
+  // For production, configure transports with fallback options
   transports: {
-    // Set the fallback transport for each chain
     [mainnet.id]: transport,
   },
+  // Optional customization parameters
+  ssr: true, // Optimize for server-side rendering
 });
 
 // Export our featured wallet IDs for use elsewhere

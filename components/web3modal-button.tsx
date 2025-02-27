@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { Button } from "@/components/ui/button";
-import { createWeb3Modal, useWeb3Modal } from '@web3modal/wagmi/react';
+import { useWeb3Modal } from '@web3modal/wagmi/react';
 import { useAccount, useDisconnect } from 'wagmi';
 import { ChevronDown, Wallet, LogOut, Copy, CheckCircle2 } from "lucide-react";
 import {
@@ -13,21 +13,6 @@ import {
   DropdownMenuSeparator
 } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
-import { wagmiConfig, projectId, featuredWalletIds } from '@/lib/wallet-config';
-
-// Initialize Web3Modal at the module level, outside of any component
-if (typeof window !== 'undefined') {
-  createWeb3Modal({
-    wagmiConfig,
-    projectId,
-    themeMode: 'dark',
-    featuredWalletIds,
-    themeVariables: {
-      '--w3m-accent': '#3694FF', // Nexis blue color
-      '--w3m-border-radius-master': '8px',
-    },
-  });
-}
 
 export function Web3ModalButton() {
   const [mounted, setMounted] = useState(false);

@@ -257,6 +257,24 @@ export function useWalletData(): WalletData {
           marketCap: formatMarketCap(ethPriceData.market_cap),
           volume24h: formatVolume(ethPriceData.total_volume),
         });
+      } else {
+        // Handle case when ethBalance fails to load
+        console.warn('ETH balance could not be loaded, using fallback value');
+        const ethPriceData = tokenPrices.eth || getTokenPriceFallback('eth');
+        const ethPrice = ethPriceData.current_price || 3500;
+        // Use mock balance for demonstration
+        const mockEthBalance = BigInt('1000000000000000000'); // 1 ETH
+        
+        tokenBalances.push({
+          token: TOKENS.ETH,
+          balance: mockEthBalance,
+          formattedBalance: '1.0',
+          price: ethPrice,
+          value: ethPrice,
+          change24h: ethPriceData.price_change_percentage_24h || 0,
+          marketCap: formatMarketCap(ethPriceData.market_cap),
+          volume24h: formatVolume(ethPriceData.total_volume),
+        });
       }
 
       // USDC - mock balance

@@ -1,14 +1,41 @@
 "use client";
 
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { createWeb3Modal } from '@web3modal/wagmi/react';
 import { WagmiConfig } from 'wagmi';
-import type React from 'react';
-import { wagmiConfig } from './wallet-config';
+import { wagmiConfig, projectId, featuredWalletIds } from './wallet-config';
+import { useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-// Create a client for TanStack Query
+// Create a client for React Query
 const queryClient = new QueryClient();
 
-export function WalletProvider({ children }: { children: React.ReactNode }) {
+// Create Web3Modal with customized styling
+if (typeof window !== 'undefined' && projectId) {
+  createWeb3Modal({
+    wagmiConfig,
+    projectId,
+    enableAnalytics: false,
+    themeMode: 'dark',
+    featuredWalletIds,
+    themeVariables: {
+      '--w3m-accent': '#3694FF', // Nexis blue color
+      '--w3m-border-radius-master': '8px',
+    },
+  });
+}
+
+export function WalletProvider({ children }: { children: ReactNode }) {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  if (!mounted) {
+    return null;
+  }
+
   return (
     <WagmiConfig config={wagmiConfig}>
       <QueryClientProvider client={queryClient}>
