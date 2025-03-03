@@ -1,130 +1,209 @@
 "use client";
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { z } from 'zod';
 
-export interface TokenPrice {
-  id: string;
-  symbol: string;
-  name: string;
-  current_price: number;
-  market_cap: number;
-  market_cap_rank: number;
-  price_change_percentage_24h: number;
-  total_volume: number;
-  image: string;
+// Define token price schema for type safety
+const tokenPriceSchema = z.object({
+  tokenAddress: z.string().optional(),
+  usdPrice: z.number().optional(),
+  nativePrice: z.object({
+    value: z.string(),
+    decimals: z.number(),
+    name: z.string(),
+    symbol: z.string(),
+    address: z.string()
+  }).optional(),
+  exchangeAddress: z.string().optional(),
+  exchangeName: z.string().optional(),
+  priceChange: z.object({
+    '24h': z.number().optional(),
+    '7d': z.number().optional(),
+    '30d': z.number().optional()
+  }).optional()
+});
+
+export type TokenPrice = z.infer<typeof tokenPriceSchema>;
+
+export interface TokenPriceState {
+  prices: Record<string, TokenPrice | null>;
+  isLoading: boolean;
+  error: string | null;
+  lastUpdated: number | null;
+  refresh: () => Promise<void>;
+  getUsdPrice: (address: string) => number | undefined;
+  getUsdValue: (address: string, amount: string | number, decimals?: number) => number | undefined;
+  getPriceChange: (address: string, period: '24h' | '7d' | '30d') => number | undefined;
 }
 
-interface UseTokenPricesResult {
-  prices: Record<string, TokenPrice>;
-  loading: boolean;
-  error: Error | null;
-  refreshPrices: () => Promise<void>;
-}
+// Constants
+const MIN_REFRESH_INTERVAL = 30000; // 30 seconds between refreshes
+const DEBOUNCE_DELAY = 500; // 500ms debounce for rapid changes
+const DEFAULT_REFRESH_INTERVAL = 60000; // 1 minute
 
 /**
- * Hook to fetch real-time cryptocurrency prices
- * @param symbols Array of token symbols to fetch prices for (e.g., ['btc', 'eth'])
- * @param refreshInterval Interval in milliseconds to refresh prices (default: 60000 = 1 minute)
+ * Hook to fetch and track token prices
  */
-export function useTokenPrices(
-  symbols: string[],
-  refreshInterval = 60000
-): UseTokenPricesResult {
-  const [prices, setPrices] = useState<Record<string, TokenPrice>>({});
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<Error | null>(null);
+export const useTokenPrices = (
+  tokenAddresses: string[] = [],
+  chain = '0x1',
+  refreshInterval = DEFAULT_REFRESH_INTERVAL
+): TokenPriceState => {
+  const [prices, setPrices] = useState<Record<string, TokenPrice | null>>({});
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
+  
+  // Use refs to track the last refresh time and pending requests
+  const lastRefreshTimeRef = useRef<number>(0);
+  const pendingRequestRef = useRef(false);
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const addressesRef = useRef<string[]>(tokenAddresses);
+  
+  // Update the ref when addresses change
+  useEffect(() => {
+    addressesRef.current = tokenAddresses;
+  }, [tokenAddresses]);
 
-  // Convert symbols to lowercase for consistency
-  const normalizedSymbols = symbols.map(s => s.toLowerCase());
+  // Normalize token addresses: lowercase and filter duplicates and empty values
+  const getNormalizedAddresses = useCallback(() => {
+    const normalizedAddresses = addressesRef.current
+      .filter(Boolean)
+      .map(addr => addr.toLowerCase());
+    
+    // Remove duplicates
+    return [...new Set(normalizedAddresses)];
+  }, []);
 
-  const fetchPrices = useCallback(async () => {
-    if (normalizedSymbols.length === 0) {
-      setLoading(false);
+  /**
+   * Fetch token prices for all tokens in the list
+   */
+  const refreshPrices = useCallback(async () => {
+    const now = Date.now();
+    const timeSinceLastRefresh = now - lastRefreshTimeRef.current;
+    
+    // Skip if already loading or refreshed too recently
+    if (pendingRequestRef.current || timeSinceLastRefresh < MIN_REFRESH_INTERVAL) {
       return;
     }
-
+    
+    const normalizedAddresses = getNormalizedAddresses();
+    
+    if (normalizedAddresses.length === 0) {
+      return;
+    }
+    
     try {
-      setLoading(true);
-      // Use CoinGecko API to fetch price data
-      const response = await fetch(
-        `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${normalizedSymbols.join(',')}&order=market_cap_desc&per_page=100&page=1&sparkline=false&price_change_percentage=24h`
-      );
-
-      if (!response.ok) {
-        throw new Error(`Failed to fetch price data: ${response.status}`);
-      }
-
-      const data: TokenPrice[] = await response.json();
-      
-      // Create a mapping of symbol to price data
-      const priceMap: Record<string, TokenPrice> = {};
-      for (const token of data) {
-        priceMap[token.symbol.toLowerCase()] = token;
-      }
-
-      setPrices(priceMap);
+      pendingRequestRef.current = true;
+      setIsLoading(true);
       setError(null);
+      
+      // Create the URL with the batch of tokens
+      const url = `/api/moralis/token-prices?tokens=${normalizedAddresses.join(',')}&chain=${chain}`;
+      
+      const response = await fetch(url);
+      const data = await response.json();
+      
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Failed to fetch token prices');
+      }
+      
+      // Update the prices state with new data
+      setPrices(prev => ({
+        ...prev,
+        ...data.prices
+      }));
+      
+      setLastUpdated(now);
+      lastRefreshTimeRef.current = now;
+      
+      // Log stats about the fetch
+      console.log(`[Token Prices] Refreshed ${Object.keys(data.prices).length} prices. Meta:`, data.meta);
     } catch (err) {
       console.error('Error fetching token prices:', err);
-      setError(err instanceof Error ? err : new Error('Unknown error fetching prices'));
-      // If we fail, we'll use the last cached prices if available
+      setError(err instanceof Error ? err.message : 'Failed to fetch token prices');
     } finally {
-      setLoading(false);
+      setIsLoading(false);
+      pendingRequestRef.current = false;
     }
-  }, [normalizedSymbols]);
+  }, [chain, getNormalizedAddresses]);
 
-  // Fetch prices on mount and whenever symbols change
-  useEffect(() => {
-    fetchPrices();
-    
-    // Set up periodic refreshing if interval is provided
-    if (refreshInterval > 0) {
-      const interval = setInterval(fetchPrices, refreshInterval);
-      return () => clearInterval(interval);
+  // Debounced refresh function for rapid address changes
+  const debouncedRefresh = useCallback(() => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
     }
-  }, [fetchPrices, refreshInterval]);
+    
+    debounceTimerRef.current = setTimeout(() => {
+      refreshPrices();
+      debounceTimerRef.current = null;
+    }, DEBOUNCE_DELAY);
+  }, [refreshPrices]);
+
+  // Effect to refresh prices when tokenAddresses change
+  useEffect(() => {
+    // Only trigger a refresh if we have addresses to fetch
+    if (tokenAddresses.length > 0) {
+      debouncedRefresh();
+    }
+  }, [tokenAddresses, debouncedRefresh]);
+
+  // Set up interval for periodic refreshes
+  useEffect(() => {
+    // Initial fetch
+    if (tokenAddresses.length > 0 && !lastUpdated) {
+      refreshPrices();
+    }
+    
+    // Set up interval for refreshes
+    const intervalId = setInterval(() => {
+      if (tokenAddresses.length > 0) {
+        refreshPrices();
+      }
+    }, refreshInterval);
+    
+    return () => {
+      clearInterval(intervalId);
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    };
+  }, [refreshInterval, tokenAddresses, lastUpdated, refreshPrices]);
+
+  // Helper functions
+  const getUsdPrice = useCallback((address: string): number | undefined => {
+    const normalizedAddress = address.toLowerCase();
+    return prices[normalizedAddress]?.usdPrice;
+  }, [prices]);
+
+  const getUsdValue = useCallback((
+    address: string,
+    amount: string | number,
+    decimals = 18
+  ): number | undefined => {
+    const usdPrice = getUsdPrice(address);
+    if (usdPrice === undefined) return undefined;
+    
+    const amountNumber = typeof amount === 'string' ? Number.parseFloat(amount) : amount;
+    return usdPrice * (amountNumber / 10 ** decimals);
+  }, [getUsdPrice]);
+
+  const getPriceChange = useCallback((
+    address: string,
+    period: '24h' | '7d' | '30d'
+  ): number | undefined => {
+    const normalizedAddress = address.toLowerCase();
+    return prices[normalizedAddress]?.priceChange?.[period];
+  }, [prices]);
 
   return {
     prices,
-    loading,
+    isLoading,
     error,
-    refreshPrices: fetchPrices,
+    lastUpdated,
+    refresh: refreshPrices,
+    getUsdPrice,
+    getUsdValue,
+    getPriceChange
   };
-}
-
-// Fallback function to get price data when API fails or for tokens not listed
-export function getTokenPriceFallback(symbol: string): Partial<TokenPrice> {
-  const fallbackData: Record<string, Partial<TokenPrice>> = {
-    eth: {
-      current_price: 3500,
-      price_change_percentage_24h: 2.5,
-      market_cap: 420000000000,
-      total_volume: 15200000000,
-    },
-    usdc: {
-      current_price: 1,
-      price_change_percentage_24h: 0.1,
-      market_cap: 45000000000,
-      total_volume: 2800000000,
-    },
-    usdt: {
-      current_price: 1,
-      price_change_percentage_24h: 0,
-      market_cap: 90000000000,
-      total_volume: 50000000000,
-    },
-    wbtc: {
-      current_price: 65000,
-      price_change_percentage_24h: 3.2,
-      market_cap: 850000000000,
-      total_volume: 25500000000,
-    },
-  };
-
-  return fallbackData[symbol.toLowerCase()] || {
-    current_price: 1,
-    price_change_percentage_24h: 0,
-    market_cap: 0,
-    total_volume: 0,
-  };
-} 
+}; 

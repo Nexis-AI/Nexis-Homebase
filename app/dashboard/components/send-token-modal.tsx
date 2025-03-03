@@ -52,7 +52,7 @@ interface SendTokenModalProps {
     balance: string
     price: number
     decimals: number
-  }
+  } | null
 }
 
 export function SendTokenModal({ isOpen, onClose, token }: SendTokenModalProps) {
@@ -68,6 +68,15 @@ export function SendTokenModal({ isOpen, onClose, token }: SendTokenModalProps) 
   })
 
   const onSubmit = async (data: z.infer<typeof formSchema>) => {
+    if (!token) {
+      toast({
+        title: "Error",
+        description: "No token selected. Please try again.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     try {
       // Parse the amount and convert to token units
       const amount = data.amount;
@@ -98,12 +107,38 @@ export function SendTokenModal({ isOpen, onClose, token }: SendTokenModalProps) 
   };
 
   const handleMaxClick = () => {
+    if (!token) return;
     // Convert the balance string to a number for the form
     const numericBalance = Number(token.balance.replace(/,/g, ''))
     form.setValue("amount", numericBalance)
   }
 
-  const dollarValue = (form.watch("amount") || 0) * token.price
+  // Safely calculate dollar value with fallback when token is null
+  const dollarValue = (form.watch("amount") || 0) * (token?.price || 0)
+
+  // If no token is selected, show a placeholder or return null
+  if (!token) {
+    return (
+      <Dialog open={isOpen} onOpenChange={onClose}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <div className="flex items-center justify-between">
+              <DialogTitle>Send Token</DialogTitle>
+              <Button variant="ghost" size="icon" onClick={onClose}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <DialogDescription>
+              Please select a token first to send.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button onClick={onClose}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  }
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>

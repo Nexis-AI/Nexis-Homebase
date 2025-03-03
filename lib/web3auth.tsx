@@ -1,171 +1,318 @@
 "use client";
 
-import { createContext, useContext, useState, useEffect } from "react";
-import type { ReactNode } from "react";
-import { Web3Auth } from "@web3auth/modal";
-import { CHAIN_NAMESPACES, WEB3AUTH_NETWORK } from "@web3auth/base";
-import type { IProvider } from "@web3auth/base";
-import { OpenloginAdapter } from "@web3auth/openlogin-adapter";
+import { createContext, useContext, useCallback, useEffect, useState, ReactNode, useMemo } from 'react';
+import { CHAIN_NAMESPACES, IProvider, WALLET_ADAPTERS } from '@web3auth/base';
+import { Web3Auth } from '@web3auth/modal';
 import { EthereumPrivateKeyProvider } from "@web3auth/ethereum-provider";
-import { ethers } from "ethers";
+import { BrowserProvider, Signer } from 'ethers';
+import { trackWalletError, withTimeout } from './wallet-config';
 
+// Configuration constants with environment fallbacks
+const WEB3AUTH_CLIENT_ID = process.env.NEXT_PUBLIC_WEB3AUTH_CLIENT_ID || 
+                           'BMvOeqT8mEVUifbchuHI9ZDbyaNz9bvIiEDg3rLn2QcNfJbpxdR-dWzPXaVx8I53dEAyYYsVJk6Q3__SYy85l04';
+const WEB3AUTH_NETWORK = process.env.NEXT_PUBLIC_WEB3AUTH_NETWORK || 'sapphire_mainnet';
+
+// Chain configurations for Web3Auth
+const CHAIN_CONFIG = {
+  mainnet: {
+    chainNamespace: CHAIN_NAMESPACES.EIP155,
+    chainId: '0x1',
+    rpcTarget: 'https://eth.llamarpc.com',
+    displayName: 'Ethereum Mainnet',
+    blockExplorer: 'https://etherscan.io',
+    ticker: 'ETH',
+    tickerName: 'Ethereum',
+  },
+  polygon: {
+    chainNamespace: CHAIN_NAMESPACES.EIP155,
+    chainId: '0x89',
+    rpcTarget: 'https://polygon.llamarpc.com',
+    displayName: 'Polygon Mainnet',
+    blockExplorer: 'https://polygonscan.com',
+    ticker: 'MATIC',
+    tickerName: 'Polygon',
+  },
+  bsc: {
+    chainNamespace: CHAIN_NAMESPACES.EIP155,
+    chainId: '0x38',
+    rpcTarget: 'https://bsc.publicnode.com', 
+    displayName: 'BNB Smart Chain',
+    blockExplorer: 'https://bscscan.com',
+    ticker: 'BNB',
+    tickerName: 'BNB',
+  },
+  base: {
+    chainNamespace: CHAIN_NAMESPACES.EIP155,
+    chainId: '0x2105',
+    rpcTarget: 'https://base.llamarpc.com',
+    displayName: 'Base',
+    blockExplorer: 'https://basescan.org',
+    ticker: 'ETH',
+    tickerName: 'Ethereum',
+  },
+  arbitrum: {
+    chainNamespace: CHAIN_NAMESPACES.EIP155,
+    chainId: '0xa4b1',
+    rpcTarget: 'https://arbitrum.llamarpc.com',
+    displayName: 'Arbitrum One',
+    blockExplorer: 'https://arbiscan.io',
+    ticker: 'ETH',
+    tickerName: 'Ethereum',
+  },
+};
+
+// Default chain to use
+const DEFAULT_CHAIN = CHAIN_CONFIG.mainnet;
+
+// Type definitions for Web3Auth user info
 interface UserInfo {
   email?: string;
   name?: string;
   profileImage?: string;
   verifier?: string;
   verifierId?: string;
-  aggregateVerifier?: string;
   typeOfLogin?: string;
-  dappShare?: string;
-  idToken?: string;
-  oAuthIdToken?: string;
-  oAuthAccessToken?: string;
+  aggregateVerifier?: string;
+  [key: string]: unknown;
 }
 
-interface Web3AuthContextType {
+// Type definitions for Web3Auth adapter config
+type ModalConfig = Record<string, { label: string; showOnModal: boolean }>;
+
+// Type definitions for the context
+type Web3AuthContextType = {
   web3auth: Web3Auth | null;
   provider: IProvider | null;
-  user: UserInfo | null;
-  isLoading: boolean;
-  isAuthenticated: boolean;
+  ethersProvider: BrowserProvider | null;
+  signer: Signer | null;
   isInitialized: boolean;
+  isLoading: boolean;
+  isConnected: boolean;
   walletAddress: string | null;
-  ethersProvider: ethers.BrowserProvider | null;
-  ethersSigner: ethers.Signer | null;
-  login: () => Promise<void>;
-  logout: () => Promise<void>;
-}
-
-const Web3AuthContext = createContext<Web3AuthContextType | null>(null);
-
-export const useWeb3Auth = () => {
-  const context = useContext(Web3AuthContext);
-  if (!context) {
-    throw new Error("useWeb3Auth must be used within a Web3AuthProvider");
-  }
-  return context;
+  error: Error | null;
+  chainId: string;
+  setChainId: (chainId: string) => void;
+  connect: () => Promise<void>;
+  disconnect: () => Promise<void>;
+  switchNetwork: (chainId: string) => Promise<void>;
+  userInfo: UserInfo | null;
 };
 
-export const Web3AuthProvider = ({ children }: { children: ReactNode }) => {
+// Create context with default values
+const Web3AuthContext = createContext<Web3AuthContextType>({
+  web3auth: null,
+  provider: null,
+  ethersProvider: null,
+  signer: null,
+  isInitialized: false,
+  isLoading: false,
+  isConnected: false,
+  walletAddress: null,
+  error: null,
+  chainId: DEFAULT_CHAIN.chainId,
+  setChainId: () => {},
+  connect: async () => {},
+  disconnect: async () => {},
+  switchNetwork: async () => {},
+  userInfo: null,
+});
+
+// Provider component properties
+interface Web3AuthProviderProps {
+  children: ReactNode;
+}
+
+// Get Web3Auth provider
+export const Web3AuthProvider = ({ children }: Web3AuthProviderProps) => {
+  // State
   const [web3auth, setWeb3auth] = useState<Web3Auth | null>(null);
   const [provider, setProvider] = useState<IProvider | null>(null);
-  const [user, setUser] = useState<UserInfo | null>(null);
+  const [ethersProvider, setEthersProvider] = useState<BrowserProvider | null>(null);
+  const [signer, setSigner] = useState<Signer | null>(null);
+  const [isInitialized, setIsInitialized] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isConnected, setIsConnected] = useState(false);
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
-  const [ethersProvider, setEthersProvider] = useState<ethers.BrowserProvider | null>(null);
-  const [ethersSigner, setEthersSigner] = useState<ethers.Signer | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
-  const [isInitialized, setIsInitialized] = useState<boolean>(false);
+  const [error, setError] = useState<Error | null>(null);
+  const [chainId, setChainId] = useState(DEFAULT_CHAIN.chainId);
+  const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
+  
+  // Get the chain config based on chainId
+  const getChainConfig = useCallback((chainIdToUse: string) => {
+    // Find the chain config by chainId
+    const chainConfig = Object.values(CHAIN_CONFIG).find((config) => config.chainId === chainIdToUse);
+    
+    // Return the chain config or default to mainnet
+    return chainConfig || DEFAULT_CHAIN;
+  }, []);
 
+  // Initialize Web3Auth
   useEffect(() => {
-    const init = async () => {
+    const initWeb3Auth = async () => {
       try {
-        // Skip initialization when rendering on the server
-        if (typeof window === "undefined") return;
-
-        const clientId = "BEMwl6aZFyj8ad1nu0UPVxi2o-XCsfVnV33fzXmH2WfZMH5llJt4Q-rqn7TzQvTVkWBtzP5v2_urP1PXXAqPEYo";
+        setIsLoading(true);
         
-        const chainConfig = {
-          chainNamespace: CHAIN_NAMESPACES.EIP155,
-          chainId: "0x1", // Ethereum mainnet
-          rpcTarget: "https://ethereum.publicnode.com", // Updated to a more reliable RPC endpoint
-          displayName: "Ethereum Mainnet",
-          blockExplorer: "https://etherscan.io",
-          ticker: "ETH",
-          tickerName: "Ethereum",
-        };
+        const chainConfig = getChainConfig(chainId);
         
+        // Create the private key provider
         const privateKeyProvider = new EthereumPrivateKeyProvider({
           config: { chainConfig },
         });
-
+        
+        // Create a new Web3Auth instance
         const web3authInstance = new Web3Auth({
-          clientId,
-          web3AuthNetwork: WEB3AUTH_NETWORK.SAPPHIRE_MAINNET,
-          chainConfig,
-          privateKeyProvider,
-          // Removed custom UI configuration that requires paid plan
-        });
-
-        const openloginAdapter = new OpenloginAdapter({
-          adapterSettings: {
-            clientId,
-            network: WEB3AUTH_NETWORK.SAPPHIRE_MAINNET,
-            uxMode: "popup",
+          clientId: WEB3AUTH_CLIENT_ID,
+          web3AuthNetwork: WEB3AUTH_NETWORK as any,
+          privateKeyProvider: privateKeyProvider,
+          uiConfig: {
+            // Use a simple dark theme that doesn't require specific WHITE_LABEL_THEME type
+            loginMethodsOrder: ['google', 'facebook', 'twitter', 'discord', 'github', 'apple', 'email_passwordless'],
+            appLogo: 'https://hebbkx1anhila5yf.public.blob.vercel-storage.com/Nexis-Profile-Photo%20(1)%201-8LcRo5KayRrYjaJWdzJIkA1fdh4YZF.png',
           },
+          // Use more appropriate storage key that web3auth accepts
+          storageKey: "local",
+          enableLogging: process.env.NODE_ENV === 'development',
         });
         
-        // @ts-ignore - The Web3Auth types might be outdated
-        web3authInstance.configureAdapter(openloginAdapter);
+        // Initialize the modal with the appropriate adapter settings
+        const modalConfig: ModalConfig = {};
+        
+        // Configure adapters that are supported
+        modalConfig[WALLET_ADAPTERS.WALLET_CONNECT_V2] = {
+          label: 'walletconnect',
+          showOnModal: true,
+        };
+        
+        modalConfig[WALLET_ADAPTERS.COINBASE] = {
+          label: 'coinbase',
+          showOnModal: true,
+        };
+        
+        modalConfig[WALLET_ADAPTERS.TORUS_EVM] = {
+          label: 'torus',
+          showOnModal: true,
+        };
+        
+        await withTimeout(web3authInstance.initModal({
+          modalConfig
+        }), 10000); // 10s timeout for initialization
         
         setWeb3auth(web3authInstance);
-        
-        await web3authInstance.initModal();
-        
         setIsInitialized(true);
         
+        // Check if already connected
         if (web3authInstance.connected) {
-          const provider = web3authInstance.provider;
-          const userInfo = await web3authInstance.getUserInfo();
-          
-          setProvider(provider);
-          setUser(userInfo);
-          setIsAuthenticated(true);
-          
-          if (provider) {
-            const ethersProvider = new ethers.BrowserProvider(provider);
-            const signer = await ethersProvider.getSigner();
-            const address = await signer.getAddress();
-            
-            setEthersProvider(ethersProvider);
-            setEthersSigner(signer);
-            setWalletAddress(address);
+          const localProvider = web3authInstance.provider;
+          if (localProvider) {
+            setProvider(localProvider);
+            await updateWalletInfo(localProvider);
+            setIsConnected(true);
           }
         }
-      } catch (error) {
-        console.error("Error initializing Web3Auth", error);
+      } catch (error: unknown) {
+        console.error('Web3Auth initialization error:', error);
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        trackWalletError('web3auth_init', errorMessage || 'Failed to initialize Web3Auth');
+        setError(error instanceof Error ? error : new Error(String(error)));
+      } finally {
+        setIsLoading(false);
       }
     };
-
-    init();
-  }, []);
-
-  const login = async () => {
+    
+    if (!isInitialized) {
+      initWeb3Auth();
+    }
+  }, [chainId, getChainConfig, isInitialized]);
+  
+  // Update wallet information after connection
+  const updateWalletInfo = useCallback(async (web3Provider: IProvider) => {
+    if (!web3Provider) return;
+    
+    try {
+      // Create ethers provider from Web3Auth provider
+      const etherProvider = new BrowserProvider(web3Provider as unknown);
+      const signerInstance = await etherProvider.getSigner();
+      const address = await signerInstance.getAddress();
+      
+      setEthersProvider(etherProvider);
+      setSigner(signerInstance);
+      setWalletAddress(address);
+      
+      // Get user info if available
+      if (web3auth?.connected) {
+        try {
+          const userInfoData = await web3auth.getUserInfo();
+          setUserInfo(userInfoData as UserInfo);
+        } catch (e) {
+          console.warn("Could not get user info", e);
+        }
+      }
+    } catch (error: unknown) {
+      console.error('Failed to update wallet info:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      trackWalletError('web3auth_wallet_info', errorMessage || 'Failed to get wallet information');
+    }
+  }, [web3auth]);
+  
+  // Connect wallet
+  const connect = useCallback(async () => {
     if (!web3auth) {
-      console.error("Web3Auth not initialized");
-      return;
+      const notInitialized = new Error('Web3Auth not initialized yet');
+      setError(notInitialized);
+      throw notInitialized;
     }
     
     setIsLoading(true);
+    setError(null);
     
     try {
-      const provider = await web3auth.connect();
-      const userInfo = await web3auth.getUserInfo();
+      // Connect with a timeout
+      const web3Provider = await withTimeout(web3auth.connect(), 30000); // 30s timeout for connection
       
-      setProvider(provider);
-      setUser(userInfo);
-      setIsAuthenticated(true);
-      
-      if (provider) {
-        const ethersProvider = new ethers.BrowserProvider(provider);
-        const signer = await ethersProvider.getSigner();
-        const address = await signer.getAddress();
+      if (web3Provider) {
+        setProvider(web3Provider);
+        await updateWalletInfo(web3Provider);
+        setIsConnected(true);
         
-        setEthersProvider(ethersProvider);
-        setEthersSigner(signer);
-        setWalletAddress(address);
+        // Clear any previous errors
+        setError(null);
+        
+        // Save connection state in localStorage
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('wallet_autoconnect', 'true');
+        }
       }
-    } catch (error) {
-      console.error("Error logging in with Web3Auth", error);
+    } catch (error: unknown) {
+      console.error('Web3Auth connection error:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      
+      // User canceled error - don't treat as an actual error
+      if (errorMessage.includes('User closed modal') || 
+          errorMessage.includes('cancelled') || 
+          errorMessage.includes('canceled')) {
+        console.log('User cancelled login');
+        setError(null);
+      } else {
+        trackWalletError('web3auth_connect', errorMessage || 'Failed to connect Web3Auth');
+        setError(error instanceof Error ? error : new Error(String(error)));
+      }
+      
+      // Reset state
+      setIsConnected(false);
+      setProvider(null);
+      setEthersProvider(null);
+      setSigner(null);
+      setWalletAddress(null);
+      
+      throw error;
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const logout = async () => {
+  }, [web3auth, updateWalletInfo]);
+  
+  // Disconnect wallet
+  const disconnect = useCallback(async () => {
     if (!web3auth) {
-      console.error("Web3Auth not initialized");
       return;
     }
     
@@ -174,36 +321,127 @@ export const Web3AuthProvider = ({ children }: { children: ReactNode }) => {
     try {
       await web3auth.logout();
       
+      // Clear session data
       setProvider(null);
-      setUser(null);
-      setIsAuthenticated(false);
       setEthersProvider(null);
-      setEthersSigner(null);
+      setSigner(null);
       setWalletAddress(null);
-    } catch (error) {
-      console.error("Error logging out with Web3Auth", error);
+      setUserInfo(null);
+      setIsConnected(false);
+      
+      // Clear localStorage autoconnect flag
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('wallet_autoconnect');
+      }
+    } catch (error: unknown) {
+      console.error('Web3Auth disconnection error:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      trackWalletError('web3auth_disconnect', errorMessage || 'Failed to disconnect Web3Auth');
+      setError(error instanceof Error ? error : new Error(String(error)));
     } finally {
       setIsLoading(false);
     }
-  };
-
+  }, [web3auth]);
+  
+  // Switch network
+  const switchNetwork = useCallback(async (newChainId: string) => {
+    if (!web3auth || !web3auth.provider) {
+      const notConnected = new Error('Please connect wallet first');
+      setError(notConnected);
+      throw notConnected;
+    }
+    
+    setIsLoading(true);
+    
+    try {
+      const chainConfig = getChainConfig(newChainId);
+      
+      // Switch chain using the provider
+      await web3auth.provider.request({
+        method: "wallet_switchEthereumChain",
+        params: [{ chainId: newChainId }]
+      });
+      
+      // Update chain ID
+      setChainId(newChainId);
+      
+      // Update provider and wallet info
+      await updateWalletInfo(web3auth.provider);
+    } catch (error: unknown) {
+      console.error('Failed to switch network:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      trackWalletError('web3auth_switch_network', errorMessage || 'Failed to switch network');
+      setError(error instanceof Error ? error : new Error(String(error)));
+      throw error;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [web3auth, getChainConfig, updateWalletInfo]);
+  
+  // Auto-connect on startup if previously connected
+  useEffect(() => {
+    const autoConnect = async () => {
+      // Only try to auto-connect if initialized, not connected yet, and have autoconnect flag
+      if (isInitialized && !isConnected && !isLoading && web3auth) {
+        const shouldAutoConnect = typeof window !== 'undefined' && 
+                                 localStorage.getItem('wallet_autoconnect') === 'true';
+        
+        if (shouldAutoConnect) {
+          try {
+            await connect();
+          } catch (error) {
+            // Failed to auto-connect, clear the flag
+            if (typeof window !== 'undefined') {
+              localStorage.removeItem('wallet_autoconnect');
+            }
+          }
+        }
+      }
+    };
+    
+    autoConnect();
+  }, [isInitialized, isConnected, isLoading, web3auth, connect]);
+  
+  // Create the context value
+  const contextValue = useMemo(() => ({
+    web3auth,
+    provider,
+    ethersProvider,
+    signer,
+    isInitialized,
+    isLoading,
+    isConnected,
+    walletAddress,
+    error,
+    chainId,
+    setChainId,
+    connect,
+    disconnect,
+    switchNetwork,
+    userInfo,
+  }), [
+    web3auth,
+    provider,
+    ethersProvider,
+    signer,
+    isInitialized,
+    isLoading,
+    isConnected,
+    walletAddress,
+    error,
+    chainId,
+    connect,
+    disconnect,
+    switchNetwork,
+    userInfo,
+  ]);
+  
   return (
-    <Web3AuthContext.Provider
-      value={{
-        web3auth,
-        provider,
-        user,
-        isLoading,
-        isAuthenticated,
-        isInitialized,
-        walletAddress,
-        ethersProvider,
-        ethersSigner,
-        login,
-        logout,
-      }}
-    >
+    <Web3AuthContext.Provider value={contextValue}>
       {children}
     </Web3AuthContext.Provider>
   );
-}; 
+};
+
+// Custom hook to use the Web3Auth context
+export const useWeb3Auth = () => useContext(Web3AuthContext); 

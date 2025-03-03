@@ -21,7 +21,7 @@ interface ReceiveTokenModalProps {
     symbol: string
     name: string
     address?: string
-  }
+  } | null
   walletAddress: string
 }
 
@@ -54,18 +54,22 @@ export function ReceiveTokenModal({ isOpen, onClose, token, walletAddress }: Rec
     setShowQR(!showQR)
   }
 
+  // Determine the token name and symbol to display
+  const tokenSymbol = token?.symbol || 'tokens';
+  const tokenName = token?.name || 'cryptocurrency';
+
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="sm:max-w-[425px]">
         <DialogHeader>
           <div className="flex items-center justify-between">
-            <DialogTitle>Receive {token.symbol}</DialogTitle>
+            <DialogTitle>Receive {tokenSymbol}</DialogTitle>
             <Button variant="ghost" size="icon" onClick={onClose}>
               <X className="h-4 w-4" />
             </Button>
           </div>
           <DialogDescription>
-            Share your wallet address to receive {token.name} ({token.symbol}).
+            Share your wallet address to receive {token ? `${token.name} (${token.symbol})` : 'tokens'}.
           </DialogDescription>
         </DialogHeader>
         
@@ -82,13 +86,13 @@ export function ReceiveTokenModal({ isOpen, onClose, token, walletAddress }: Rec
                 />
               </div>
               <p className="text-sm text-muted-foreground text-center">
-                Scan this QR code to receive {token.symbol}
+                Scan this QR code to receive {tokenSymbol}
               </p>
             </div>
           )}
           
           <div className="space-y-2">
-            <div className="text-sm font-medium">Your {token.symbol} Address</div>
+            <div className="text-sm font-medium">Your {token ? token.symbol : 'Wallet'} Address</div>
             <div className="flex gap-2">
               <Input 
                 value={walletAddress} 
@@ -109,7 +113,7 @@ export function ReceiveTokenModal({ isOpen, onClose, token, walletAddress }: Rec
             </Button>
           </div>
           
-          {token.address && (
+          {token?.address && (
             <div className="space-y-2 border-t pt-4">
               <div className="text-sm font-medium">Token Contract Address</div>
               <div className="flex gap-2">
@@ -140,7 +144,7 @@ export function ReceiveTokenModal({ isOpen, onClose, token, walletAddress }: Rec
           
           <div className="border-t pt-4">
             <p className="text-sm text-muted-foreground">
-              Important: Only send {token.symbol} to this address. Sending other tokens may result in permanent loss.
+              Important: Only send {tokenSymbol} to this address. Sending other tokens may result in permanent loss.
             </p>
           </div>
         </div>

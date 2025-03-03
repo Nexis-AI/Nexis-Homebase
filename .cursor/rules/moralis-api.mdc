@@ -1,0 +1,216 @@
+---
+description: moralis api
+globs: 
+alwaysApply: false
+---
+
+# Your rule content
+
+Below is an example of comprehensive developer documentation that reviews the Moralis APIs—Wallet, ReFi, Tokens, Token Search, and Token Sniper—and shows how to integrate them into a Next.js project using TypeScript and TailwindCSS. You can use these as a starting point and expand with additional details from the official Moralis docs.
+
+Overview
+
+Moralis’s Web3 Data API suite gives you access to rich blockchain data. The key API groups include:
+	•	Wallet API: Retrieve on‑chain wallet data (NFTs, token balances, transactions, etc.).
+	•	ReFi API: Access regenerative finance (ReFi) data—projects, metrics, and related transactions (note: endpoints here are illustrative; please confirm with the latest docs).
+	•	Tokens API: Fetch token metadata, price info, and holder distributions.
+	•	Token Search API: Search tokens by name, symbol, or contract address.
+	•	Token Sniper API: Identify tokens flagged as potential sniping targets, useful for monitoring new or high‑volatility tokens.
+
+Each section below outlines the available methods (endpoints), key parameters, and expected responses. Following that, you’ll find a consolidated Next.js integration example.
+
+1. Moralis Wallet API
+
+Description
+
+The Wallet API provides endpoints to query wallet-related data from the blockchain, including NFTs, ERC‑20 token balances, transfers, and transaction history.
+
+Endpoints & Methods
+	1.	Get Wallet NFTs
+	•	Endpoint: GET /{address}/nft
+	•	Description: Retrieves all NFTs owned by a specified wallet address.
+	•	Parameters:
+	•	address (string, required): The wallet address.
+	•	chain (string, optional): The blockchain (e.g., “eth” for Ethereum).
+	•	format, cursor, limit (optional): For formatting and pagination.
+	•	Response: JSON with an array of NFT objects, including metadata like token ID, URI, and contract details.
+	2.	Get Wallet Token Transfers
+	•	Endpoint: GET /{address}/token/transfers
+	•	Description: Retrieves the transfer history for tokens associated with a wallet.
+	•	Parameters:
+	•	Same as above plus possible date or type filters.
+	•	Response: JSON array of token transfer events.
+	3.	Get Wallet Token Balances
+	•	Endpoint: GET /{address}/erc20
+	•	Description: Returns ERC‑20 token balances for the wallet.
+	•	Parameters:
+	•	address (required), chain (optional), etc.
+	•	Response: JSON object listing tokens and their balances.
+	4.	Get Wallet Transactions
+	•	Endpoint: GET /{address}
+	•	Description: Provides the transaction history of a wallet.
+	•	Parameters:
+	•	address, with additional filters as needed.
+	•	Response: JSON array of transaction objects.
+
+2. Moralis ReFi API
+
+Description
+
+The ReFi API is designed to expose data related to regenerative finance initiatives—tracking projects, metrics, and associated transactions. (Note: Endpoints are provided as illustrative examples; refer to the official docs for up‑to‑date details.)
+
+Endpoints & Methods
+	1.	Get ReFi Projects
+	•	Endpoint: GET /refi/projects
+	•	Description: Returns a list of regenerative finance projects.
+	•	Parameters:
+	•	Filtering options (e.g., by chain or project type).
+	•	Response: JSON array of project objects.
+	2.	Get ReFi Metrics
+	•	Endpoint: GET /refi/metrics
+	•	Description: Retrieves aggregated metrics for ReFi projects.
+	•	Parameters:
+	•	Date range, metric type, etc.
+	•	Response: JSON object with metric values.
+	3.	Get ReFi Transactions
+	•	Endpoint: GET /refi/transactions
+	•	Description: Returns transaction data related to regenerative finance activities.
+	•	Parameters:
+	•	Filtering options as needed.
+	•	Response: JSON array of transaction objects.
+
+3. Moralis Tokens API
+
+Description
+
+This API provides token-specific data such as metadata, current pricing, and distribution of token holders.
+
+Endpoints & Methods
+	1.	Get Token Metadata
+	•	Endpoint: GET /token/{address}
+	•	Description: Retrieves metadata (name, symbol, decimals, etc.) for a specific token.
+	•	Parameters:
+	•	address (string, required): The token contract address.
+	•	chain (optional).
+	•	Response: JSON object with token details.
+	2.	Get Token Price
+	•	Endpoint: GET /token/{address}/price
+	•	Description: Returns current price and, optionally, historical price data for a token.
+	•	Parameters:
+	•	address, chain, and optionally a currency parameter.
+	•	Response: JSON object containing price information.
+	3.	Get Token Holders
+	•	Endpoint: GET /token/{address}/holders
+	•	Description: Lists wallet addresses that hold the token.
+	•	Parameters:
+	•	Pagination and filtering parameters, along with chain.
+	•	Response: JSON object with an array of holder details.
+
+4. Moralis Token Search API
+
+Description
+
+The Token Search API allows you to search tokens by name, symbol, or contract address across supported chains.
+
+Endpoint & Method
+	•	Search Tokens
+	•	Endpoint: GET /token/search
+	•	Description: Searches for tokens based on a query string.
+	•	Parameters:
+	•	q (string, required): The search query.
+	•	chain (optional): Blockchain network.
+	•	Response: JSON object containing an array of tokens that match the query.
+
+5. Moralis Token Sniper API
+
+Description
+
+This API is targeted toward monitoring newly launched or highly volatile tokens that may be vulnerable to “sniping” (where bots or traders take advantage of sudden price movements).
+
+Endpoint & Method
+	•	Get Token Sniper Data
+	•	Endpoint: GET /token/sniper
+	•	Description: Retrieves data on tokens flagged as potential sniping targets.
+	•	Parameters:
+	•	Filtering parameters such as chain or time windows.
+	•	Response: JSON object with details of tokens that meet sniping criteria.
+
+Integration Example in Next.js (TypeScript + TailwindCSS)
+
+Below is a sample Next.js project structure that shows how you might integrate these APIs. In this example, we demonstrate fetching a wallet’s NFTs using the Wallet API. Similar patterns can be followed for the other endpoints.
+
+1. API Route Example (pages/api/wallet/nft.ts)
+
+// pages/api/wallet/nft.ts
+import type { NextApiRequest, NextApiResponse } from 'next';
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  const { address } = req.query;
+  const apiKey = process.env.MORALIS_API_KEY;
+  const url = `https://deep-index.moralis.io/api/v2/${address}/nft?chain=eth&format=decimal`;
+
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'X-API-Key': apiKey as string,
+      },
+    });
+    const data = await response.json();
+    res.status(200).json(data);
+  } catch (error) {
+    res.status(500).json({ error: 'Error fetching NFTs' });
+  }
+}
+
+2. Next.js Page Example (pages/index.tsx)
+
+// pages/index.tsx
+import type { NextPage } from 'next';
+import { useState, useEffect } from 'react';
+
+interface NFT {
+  token_id: string;
+  token_uri: string;
+  // Add additional properties based on the response structure
+}
+
+const Home: NextPage = () => {
+  const [nfts, setNfts] = useState<NFT[]>([]);
+  const walletAddress = '0xYourWalletAddress'; // Replace with your wallet address
+
+  useEffect(() => {
+    async function fetchNFTs() {
+      const res = await fetch(`/api/wallet/nft?address=${walletAddress}`);
+      const data = await res.json();
+      setNfts(data.result);
+    }
+    fetchNFTs();
+  }, []);
+
+  return (
+    <div className="container mx-auto p-4">
+      <h1 className="text-3xl font-bold mb-6">My Wallet NFTs</h1>
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+        {nfts.map((nft) => (
+          <div key={nft.token_id} className="border rounded-lg p-4 shadow">
+            <p className="text-lg font-medium">Token ID: {nft.token_id}</p>
+            {/* You can add an image or additional metadata here */}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+export default Home;
+
+3. Environment Configuration
+
+Make sure to add your Moralis API key in an environment variable. In your project root, create a .env.local file:
+
+Final Notes
+	•	Expand and Adapt: The above documentation covers the primary endpoints and provides basic integration examples. For production use, consult the official Moralis Wallet API documentation (and corresponding pages for ReFi, Tokens, Token Search, and Token Sniper) for complete parameter details, response schemas, and additional endpoints.
+	•	Error Handling & Security: In your API routes and frontend code, ensure robust error handling and secure your API keys.
+	•	Styling: TailwindCSS is used here for rapid styling. Adjust the classes as needed for your design requirements.
+
+This should give you a solid foundation to build your Next.js application integrating Moralis’s suite of Web3 Data APIs using TypeScript and TailwindCSS.

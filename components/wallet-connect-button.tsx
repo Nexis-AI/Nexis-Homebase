@@ -1,126 +1,145 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { ChevronDown, LogOut, Wallet, Copy, CheckCircle2 } from "lucide-react";
-import { 
-  DropdownMenu, 
-  DropdownMenuTrigger, 
-  DropdownMenuContent, 
-  DropdownMenuItem,
-  DropdownMenuSeparator 
-} from "@/components/ui/dropdown-menu";
-import { Button } from "@/components/ui/button";
-import { useWeb3Auth } from "@/lib/web3auth";
+import { Button } from "./ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./ui/dropdown-menu";
+import { ChevronDown, Copy } from "lucide-react";
 import { toast } from "sonner";
+import { useState } from "react";
+import { cn } from "@/lib/utils";
+import { Skeleton } from "./ui/skeleton";
+import { useWalletConnection } from "@/lib/hooks/use-wallet-connection";
 
-export function WalletConnectButton() {
-  const { 
-    isAuthenticated, 
-    isInitialized, 
-    isLoading, 
-    walletAddress, 
-    login, 
-    logout 
-  } = useWeb3Auth();
-  
-  const [copied, setCopied] = useState(false);
-  
+export const ConnectionErrorAlert = () => {
+  return (
+    <div className="bg-red-900/20 border border-red-700/30 rounded-md p-3 mb-4 flex items-center">
+      <div className="mr-3 text-red-500">
+        <svg 
+          xmlns="http://www.w3.org/2000/svg" 
+          width="20" 
+          height="20" 
+          viewBox="0 0 24 24" 
+          fill="none" 
+          stroke="currentColor" 
+          strokeWidth="2" 
+          strokeLinecap="round" 
+          strokeLinejoin="round"
+          aria-hidden="true"
+          role="img"
+        >
+          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+          <line x1="12" y1="9" x2="12" y2="13" />
+          <line x1="12" y1="17" x2="12.01" y2="17" />
+        </svg>
+      </div>
+      <div>
+        <p className="text-sm font-medium text-white">
+          We're having trouble connecting to the blockchain. Your wallet remains connected, but some data may not load correctly.
+        </p>
+      </div>
+    </div>
+  );
+};
+
+export const WalletConnectButton = () => {
+  const {
+    isConnected,
+    isInitialized,
+    isLoading,
+    isConnecting,
+    walletAddress,
+    connect,
+    disconnect,
+    formatAddress,
+    connectionMetrics,
+  } = useWalletConnection();
+
+  const [isCopied, setIsCopied] = useState(false);
+
+  // Handle copy wallet address
   const handleCopy = async () => {
     if (!walletAddress) return;
     
     try {
       await navigator.clipboard.writeText(walletAddress);
-      setCopied(true);
-      toast.success("Wallet address copied to clipboard");
-      setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      toast.error("Failed to copy wallet address");
-    }
-  };
-  
-  const formatAddress = (address: string | null) => {
-    if (!address) return "";
-    return `${address.substring(0, 6)}...${address.substring(address.length - 4)}`;
-  };
-  
-  const handleConnect = async () => {
-    try {
-      await login();
-      toast.success("Wallet connected successfully");
+      setIsCopied(true);
+      toast.success("Address copied to clipboard");
+      
+      // Reset copied state after 2 seconds
+      setTimeout(() => {
+        setIsCopied(false);
+      }, 2000);
     } catch (error) {
-      toast.error("Failed to connect wallet");
-      console.error(error);
+      console.error("Failed to copy address", error);
+      toast.error("Failed to copy address");
     }
   };
-  
-  const handleDisconnect = async () => {
-    try {
-      await logout();
-      toast.success("Wallet disconnected");
-    } catch (error) {
-      toast.error("Failed to disconnect wallet");
-      console.error(error);
-    }
-  };
-  
-  // Return loading state if Web3Auth is not yet initialized
-  if (!isInitialized) {
+
+  // If the button is in loading state or Web3Auth is not initialized yet
+  if (isLoading || !isInitialized) {
     return (
-      <Button variant="outline" disabled className="flex items-center gap-2 rounded-lg border border-white/5 px-2 sm:px-3 py-2">
-        <div className="h-4 w-4 rounded-lg animate-pulse bg-secondary" />
-        <span className="hidden sm:inline">Loading...</span>
-        <ChevronDown className="h-4 w-4 text-muted-foreground" />
+      <Button variant="outline" size="sm" disabled className="h-9 w-40">
+        <Skeleton className="h-5 w-24" />
       </Button>
     );
   }
-  
+
   // If not authenticated, show connect button
-  if (!isAuthenticated) {
+  if (!isConnected || !walletAddress) {
     return (
-      <Button 
-        variant="secondary" 
-        className="flex items-center gap-2 rounded-lg border border-white/5 px-2 sm:px-3 py-2" 
-        onClick={handleConnect}
-        disabled={isLoading}
+      <Button
+        onClick={connect}
+        variant="outline"
+        size="sm"
+        disabled={isConnecting}
+        className={cn(
+          "transition-all duration-200 h-9",
+          isConnecting ? "w-32" : "w-40"
+        )}
       >
-        <Wallet className="h-4 w-4" />
-        <span className="hidden sm:inline">{isLoading ? "Connecting..." : "Connect Wallet"}</span>
-        <ChevronDown className="h-4 w-4 text-muted-foreground" />
+        {isConnecting ? "Connecting..." : "Connect Wallet"}
       </Button>
     );
   }
-  
-  // If authenticated, show wallet info dropdown
+
+  // If authenticated, show wallet address with dropdown
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="secondary" className="flex items-center gap-2 rounded-lg border border-white/5 px-2 sm:px-3 py-2">
-          <div className="h-4 w-4 bg-primary rounded-lg" />
-          <span className="hidden sm:inline">{formatAddress(walletAddress)}</span>
-          <ChevronDown className="h-4 w-4 text-muted-foreground" />
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-9 gap-2"
+        >
+          <span>{formatAddress(walletAddress)}</span>
+          <ChevronDown className="h-4 w-4" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
-        <div className="flex items-center justify-between px-3 py-2 text-sm font-medium text-muted-foreground">
-          <span>Connected Wallet</span>
-        </div>
-        <DropdownMenuSeparator />
-        <div className="px-3 py-2">
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-xs text-muted-foreground">Address</span>
-            <Button variant="ghost" size="icon" className="h-5 w-5" onClick={handleCopy}>
-              {copied ? 
-                <CheckCircle2 className="h-3 w-3 text-green-500" /> : 
-                <Copy className="h-3 w-3" />
-              }
+        <div className="flex flex-col space-y-1 p-2">
+          <p className="text-xs text-muted-foreground px-2">Connected Wallet</p>
+          <div className="flex items-center justify-between rounded-md p-2 text-sm bg-secondary/50">
+            <span className="font-medium">{formatAddress(walletAddress)}</span>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={handleCopy}
+              aria-label="Copy address"
+            >
+              <Copy className={cn("h-4 w-4", isCopied ? "text-green-500" : "")} />
             </Button>
           </div>
-          <div className="truncate font-mono text-xs">{walletAddress}</div>
+          {connectionMetrics.lastConnectionTime && (
+            <p className="text-xs text-muted-foreground px-2">
+              Connected in {connectionMetrics.lastConnectionTime}ms
+            </p>
+          )}
         </div>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={handleDisconnect} className="text-destructive focus:text-destructive cursor-pointer">
-          <LogOut className="mr-2 h-4 w-4" />
-          <span>Disconnect</span>
+        <DropdownMenuItem 
+          className="text-destructive focus:text-destructive"
+          onClick={disconnect}
+        >
+          Disconnect
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

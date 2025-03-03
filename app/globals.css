@@ -2,6 +2,14 @@
 @tailwind components;
 @tailwind utilities;
 
+@font-face {
+  font-family: 'Alte Haas Grotesk';
+  src: url('/font/AlteHaasGroteskBold.ttf') format('truetype');
+  font-weight: bold;
+  font-style: normal;
+  font-display: swap;
+}
+
 @layer base {
   :root {
     --background: 0 0% 7%;
@@ -24,7 +32,14 @@
     --input: 0 0% 20%;
     --ring: transparent;
     --radius: 0.5rem;
+    --chart-positive: #16a34a; /* Green 600 */
+    --chart-negative: #dc2626; /* Red 600 */
   }
+}
+
+.dark {
+  --chart-positive: #22c55e; /* Green 500 */
+  --chart-negative: #ef4444; /* Red 500 */
 }
 
 @layer base {
@@ -99,5 +114,17 @@
 .animate-gradient {
   background-size: 200% 200%;
   animation: gradient 15s ease infinite;
+}
+
+/* Font display optimization classes */
+.font-swap {
+  font-display: swap;
+}
+
+/* Preload hints for faster LCP */
+@layer utilities {
+  .optimize-lcp {
+    content-visibility: auto;
+  }
 }
 

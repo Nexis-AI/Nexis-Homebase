@@ -1,0 +1,554 @@
+"use client";
+
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useAccount, useBalance, usePublicClient } from 'wagmi';
+import { formatUnits, formatEther } from 'viem';
+import { useChainId } from 'wagmi';
+import { mainnet } from 'viem/chains';
+import { useTokenPrices, getTokenPriceFallback } from './use-token-prices';
+import { useLocalStorage } from './use-local-storage';
+import type { Hash } from 'viem';
+import { publicClient } from '../wallet-config';
+
+// Interfaces for token balances
+export interface TokenInfo {
+  name: string;
+  symbol: string;
+  address?: string;
+  decimals: number;
+  logo?: string;
+}
+
+export interface TokenBalance {
+  token: TokenInfo;
+  balance: bigint;
+  formattedBalance: string;
+  price: number;
+  value: number;
+  change24h: number;
+  marketCap?: string;
+  volume24h?: string;
+}
+
+// Interfaces for transaction history
+export interface Transaction {
+  id: string;
+  hash: string;
+  type: 'send' | 'receive' | 'swap' | 'approve' | 'other';
+  token: string;
+  amount: string;
+  from?: string;
+  to?: string;
+  status: 'pending' | 'completed' | 'failed';
+  date: string;
+}
+
+// Interfaces for approval status
+export interface Approval {
+  id: string;
+  protocol: string;
+  token: string;
+  allowance: string;
+  lastUsed?: string;
+  risk: 'high' | 'medium' | 'low';
+}
+
+// Interface for portfolio statistics
+export interface PortfolioStats {
+  totalValue: number;
+  fiatValue: number;
+  nftValue: number;
+  stakedValue: number;
+  change24h: number;
+  change24hUSD: number;
+}
+
+// Interface for the hook return value
+export interface WalletData {
+  isLoading: boolean;
+  address?: string;
+  ensName?: string;
+  tokens: TokenBalance[];
+  portfolio: PortfolioStats;
+  transactions: Transaction[];
+  approvals: Approval[];
+  refetchWalletData?: () => Promise<void>;
+  refetch: () => Promise<void>; // Alias for refetchWalletData for backward compatibility
+  addCustomToken: (token: TokenInfo) => void;
+  removeCustomToken: (tokenAddressOrSymbol: string) => void;
+  customTokens: TokenInfo[];
+  connectionState: string;
+  connectionError?: Error | null;
+  formattedEthBalance: string | null;
+  ethBalance: string | null;
+  isLoadingBalance: boolean;
+}
+
+// Connection state constants for better UX
+const CONNECTION_STATES = {
+  DISCONNECTED: 'disconnected',
+  CONNECTING: 'connecting', 
+  CONNECTED: 'connected',
+  RECONNECTING: 'reconnecting',
+  ERROR: 'error'
+};
+
+// Maximum number of retries for RPC calls
+const MAX_RETRIES = 3;
+
+// Helper function to format market cap
+function formatMarketCap(marketCap?: number): string {
+  if (!marketCap) return 'N/A';
+  if (marketCap >= 1_000_000_000_000) {
+    return `${(marketCap / 1_000_000_000_000).toFixed(2)}T`;
+  }
+  if (marketCap >= 1_000_000_000) {
+    return `${(marketCap / 1_000_000_000).toFixed(2)}B`;
+  }
+  if (marketCap >= 1_000_000) {
+    return `${(marketCap / 1_000_000).toFixed(2)}M`;
+  }
+  return `${(marketCap / 1_000).toFixed(2)}K`;
+}
+
+// Helper function to format volume
+function formatVolume(volume?: number): string {
+  if (!volume) return 'N/A';
+  if (volume >= 1_000_000_000_000) {
+    return `${(volume / 1_000_000_000_000).toFixed(2)}T`;
+  }
+  if (volume >= 1_000_000_000) {
+    return `${(volume / 1_000_000_000).toFixed(2)}B`;
+  }
+  if (volume >= 1_000_000) {
+    return `${(volume / 1_000_000).toFixed(2)}M`;
+  }
+  return `${(volume / 1_000).toFixed(2)}K`;
+}
+
+// Sample token list with metadata for Ethereum mainnet
+const TOKENS = {
+  ETH: {
+    name: 'Ethereum',
+    symbol: 'ETH',
+    decimals: 18,
+    logo: 'https://cryptologos.cc/logos/ethereum-eth-logo.png',
+  },
+  USDC: {
+    name: 'USD Coin',
+    symbol: 'USDC',
+    address: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
+    decimals: 6,
+    logo: 'https://cryptologos.cc/logos/usd-coin-usdc-logo.png',
+  },
+  USDT: {
+    name: 'Tether USD',
+    symbol: 'USDT',
+    address: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+    decimals: 6,
+    logo: 'https://cryptologos.cc/logos/tether-usdt-logo.png',
+  },
+  WBTC: {
+    name: 'Wrapped Bitcoin',
+    symbol: 'WBTC',
+    address: '0x2260fac5e5542a773aa44fbcfedf7c193bc2c599',
+    decimals: 8,
+    logo: 'https://cryptologos.cc/logos/wrapped-bitcoin-wbtc-logo.png',
+  },
+  // Add a mock NZT token for Nexis
+  NZT: {
+    name: 'Nexis Token',
+    symbol: 'NZT',
+    address: '0x123456789abcdef123456789abcdef123456789a',
+    decimals: 18,
+    logo: 'https://placehold.co/200x200/4F46E5/FFFFFF?text=NZT',
+  },
+};
+
+/**
+ * Hook to fetch and manage wallet data including balances, transactions, and approvals
+ * Optimized for production with retry limits and automatic updates on transactions
+ */
+export function useWalletData(): WalletData {
+  const { address, isConnected } = useAccount();
+  const chainId = useChainId();
+  
+  // Enhanced state management for better UX
+  const [connectionState, setConnectionState] = useState(
+    isConnected ? CONNECTION_STATES.CONNECTED : CONNECTION_STATES.DISCONNECTED
+  );
+  const [connectionError, setConnectionError] = useState<Error | null>(null);
+  
+  // Balance data with optimized fetching
+  const [walletEthBalance, setWalletEthBalance] = useState<string | null>(null);
+  const [formattedEthBalance, setFormattedEthBalance] = useState<string | null>(null);
+  const [isLoadingBalance, setIsLoadingBalance] = useState(false);
+  
+  // For tracking retry attempts
+  const retryCount = useRef(0);
+  const lastSuccessfulFetch = useRef<number | null>(null);
+  const isFirstLoad = useRef(true);
+  
+  const [tokens, setTokens] = useState<TokenBalance[]>([]);
+  const [portfolio, setPortfolio] = useState<PortfolioStats>({
+    totalValue: 0,
+    fiatValue: 0,
+    nftValue: 0,
+    stakedValue: 0,
+    change24h: 0,
+    change24hUSD: 0,
+  });
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [approvals, setApprovals] = useState<Approval[]>([]);
+  const [ensName, setEnsName] = useState<string | undefined>(undefined);
+  
+  // Get ETH balance with optimized configuration
+  const { data: ethBalanceData, refetch: refetchEthBalance } = useBalance({
+    address,
+    query: {
+      enabled: Boolean(address) && isConnected,
+      staleTime: 30_000, // Consider stale after 30 seconds
+      gcTime: 60_000, // Cache for 1 minute
+      retry: false, // Don't watch for changes, we'll manage updates manually
+    }
+  });
+  
+  // Generate a wallet-specific storage key to keep custom tokens separate per wallet
+  const walletKey = address ? `nexis-custom-tokens-${address.toLowerCase()}` : 'nexis-custom-tokens';
+  
+  // Get custom tokens from localStorage using the wallet-specific key
+  const [customTokens, setCustomTokens] = useLocalStorage<Record<string, TokenInfo>>(
+    walletKey, 
+    {}
+  );
+
+  // Combine default tokens with custom tokens
+  const allTokens = { ...TOKENS, ...customTokens };
+  
+  // Extract token symbols for price fetching
+  const tokenSymbols = Object.values(allTokens).map(token => token.symbol.toLowerCase());
+  
+  // Fetch real-time prices
+  const { prices: tokenPrices, refreshPrices } = useTokenPrices(tokenSymbols);
+  
+  // Optimize the initial connection
+  useEffect(() => {
+    if (isConnected && !walletEthBalance) {
+      // Set connecting state for better UX
+      setConnectionState(
+        isFirstLoad.current ? CONNECTION_STATES.CONNECTING : CONNECTION_STATES.RECONNECTING
+      );
+      
+      // Fetch initial data
+      fetchWalletData();
+      isFirstLoad.current = false;
+    } else if (!isConnected) {
+      // Reset state when disconnected
+      setConnectionState(CONNECTION_STATES.DISCONNECTED);
+      setWalletEthBalance(null);
+      setFormattedEthBalance(null);
+      retryCount.current = 0;
+    }
+  }, [isConnected, walletEthBalance]);
+  
+  // Function to fetch wallet data with optimized error handling
+  const fetchWalletData = useCallback(async () => {
+    if (!address || !isConnected) return;
+    
+    setIsLoadingBalance(true);
+    
+    try {
+      // Fetch ETH balance with retry mechanism
+      const balance = await fetchEthBalance(address);
+      
+      if (balance !== null) {
+        // Format the balance for display
+        const formatted = formatBalanceWithPrecision(balance);
+        
+        // Update state
+        setWalletEthBalance(balance);
+        setFormattedEthBalance(formatted);
+        
+        // Mark success
+        setConnectionState(CONNECTION_STATES.CONNECTED);
+        setConnectionError(null);
+        retryCount.current = 0; // Reset retry count on success
+        lastSuccessfulFetch.current = Date.now();
+      }
+      
+      // Continue with existing token fetching logic
+      // Mock implementation for token balances and portfolio
+      const ethPrice = tokenPrices?.eth?.current_price || 3500;
+      const mockTokens: TokenBalance[] = [
+        {
+          token: TOKENS.ETH,
+          balance: ethBalanceData?.value || BigInt(0),
+          formattedBalance: balance || '0',
+          price: ethPrice,
+          value: Number.parseFloat(balance || '0') * ethPrice,
+          change24h: tokenPrices?.eth?.price_change_percentage_24h || 2.5,
+          marketCap: formatMarketCap(tokenPrices?.eth?.market_cap),
+          volume24h: formatVolume(tokenPrices?.eth?.total_volume),
+        },
+        {
+          token: TOKENS.NZT,
+          balance: BigInt(1000 * 10**18),
+          formattedBalance: '1,000',
+          price: 8.75,
+          value: 8750,
+          change24h: 15.2,
+          marketCap: '875M',
+          volume24h: '125M',
+        },
+        // Add more mock tokens as needed
+      ];
+      
+      setTokens(mockTokens);
+      
+      // Calculate portfolio stats
+      const totalValue = mockTokens.reduce((sum, token) => sum + token.value, 0);
+      const fiatValue = mockTokens
+        .filter(t => t.token.symbol === 'USDC' || t.token.symbol === 'USDT')
+        .reduce((sum, token) => sum + token.value, 0);
+      const weightedChange = mockTokens.reduce(
+        (sum, token) => sum + (token.change24h * token.value), 
+        0
+      ) / (totalValue || 1); // Prevent division by zero
+      
+      setPortfolio({
+        totalValue,
+        fiatValue,
+        nftValue: 28200, // Mock NFT value
+        stakedValue: 4800, // Mock staked value
+        change24h: weightedChange,
+        change24hUSD: totalValue * (weightedChange / 100),
+      });
+      
+      // In a real app, fetch actual transactions from an API or blockchain
+      // For demo purposes, create mock transactions
+      const mockTransactions: Transaction[] = [
+        {
+          id: '0x1234...5678',
+          hash: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
+          type: 'send',
+          token: 'NZT',
+          amount: '1,000',
+          to: '0x8765...4321',
+          status: 'completed',
+          date: new Date(Date.now() - 30 * 60000).toISOString(), // 30 minutes ago
+        },
+        {
+          id: '0x8765...4321',
+          hash: '0x8765432109fedcba8765432109fedcba8765432109fedcba8765432109fedcba',
+          type: 'receive',
+          token: 'ETH',
+          amount: '0.5',
+          from: '0x9876...2468',
+          status: 'pending',
+          date: new Date(Date.now() - 35 * 60000).toISOString(), // 35 minutes ago
+        },
+        {
+          id: '0x9876...2468',
+          hash: '0x9876543210abcdef9876543210abcdef9876543210abcdef9876543210abcdef',
+          type: 'swap',
+          token: 'USDT → NZT',
+          amount: '500',
+          status: 'completed',
+          date: new Date(Date.now() - 40 * 60000).toISOString(), // 40 minutes ago
+        },
+      ];
+      setTransactions(mockTransactions);
+
+      // In a real app, fetch actual approvals from an API or blockchain
+      // For demo purposes, create mock approvals
+      const mockApprovals: Approval[] = [
+        {
+          id: '0x1234...5678',
+          protocol: 'NexSwap',
+          token: 'NZT',
+          allowance: 'Unlimited',
+          lastUsed: '2 hours ago',
+          risk: 'high',
+        },
+        {
+          id: '0x8765...4321',
+          protocol: 'NexStake',
+          token: 'ETH',
+          allowance: '1,000',
+          lastUsed: '1 day ago',
+          risk: 'medium',
+        },
+        {
+          id: '0x9876...2468',
+          protocol: 'NexBridge',
+          token: 'USDT',
+          allowance: '10,000',
+          lastUsed: '3 days ago',
+          risk: 'low',
+        },
+      ];
+      setApprovals(mockApprovals);
+      
+    } catch (error) {
+      console.error('Error fetching wallet data:', error);
+      
+      if (retryCount.current < MAX_RETRIES) {
+        // Increment retry counter
+        retryCount.current += 1;
+        
+        // Retry with exponential backoff
+        setTimeout(() => {
+          fetchWalletData();
+        }, 1000 * (2 ** (retryCount.current - 1))); // 1s, 2s, 4s
+        
+        setConnectionState(CONNECTION_STATES.RECONNECTING);
+      } else {
+        // Max retries reached
+        setConnectionState(CONNECTION_STATES.ERROR);
+        setConnectionError(error instanceof Error ? error : new Error('Failed to fetch wallet data'));
+      }
+    } finally {
+      setIsLoadingBalance(false);
+    }
+  }, [address, isConnected, ethBalanceData, tokenPrices]);
+  
+  // Helper function to fetch ETH balance with optimized error handling
+  const fetchEthBalance = async (walletAddress: `0x${string}`): Promise<string | null> => {
+    try {
+      // Try using wagmi hook data first (faster if cached)
+      if (ethBalanceData?.value) {
+        return formatEther(ethBalanceData.value);
+      }
+      
+      // Fallback to manual fetch if hook data is not available
+      const balance = await publicClient.getBalance({
+        address: walletAddress,
+      });
+      
+      return formatEther(balance);
+    } catch (error) {
+      console.error('Error fetching ETH balance:', error);
+      throw error;
+    }
+  };
+  
+  // Format balance with appropriate precision
+  const formatBalanceWithPrecision = (balance: string): string => {
+    const numBalance = Number.parseFloat(balance);
+    
+    if (numBalance < 0.001) {
+      return '<0.001 ETH';
+    }
+    
+    if (numBalance < 1) {
+      return `${numBalance.toFixed(4)} ETH`;
+    }
+    
+    return `${numBalance.toFixed(2)} ETH`;
+  };
+  
+  // Listen for new transactions to update balances
+  useEffect(() => {
+    if (!isConnected || !address) return;
+    
+    // Setup transaction watcher
+    let cleanup: (() => void) | undefined;
+    
+    try {
+      if (publicClient?.watchPendingTransactions) {
+        cleanup = publicClient.watchPendingTransactions({
+          onTransactions: () => {
+            // Only refetch if we haven't fetched recently (past 5 seconds)
+            const now = Date.now();
+            const timeSinceLastFetch = lastSuccessfulFetch.current 
+              ? now - lastSuccessfulFetch.current 
+              : Number.POSITIVE_INFINITY;
+              
+            if (timeSinceLastFetch > 5000) {
+              refetchEthBalance();
+              fetchWalletData();
+            }
+          }
+        });
+      }
+    } catch (error) {
+      console.error('Error setting up transaction watcher:', error);
+    }
+    
+    // Clean up
+    return () => {
+      if (cleanup) cleanup();
+    };
+  }, [address, isConnected, refetchEthBalance, fetchWalletData]);
+  
+  // Handle ENS resolution with error handling
+  useEffect(() => {
+    const getEnsName = async () => {
+      if (!address || chainId !== mainnet.id) {
+        setEnsName(undefined);
+        return;
+      }
+      
+      try {
+        const name = await publicClient.getEnsName({
+          address,
+        });
+        // Handle null return value from getEnsName
+        setEnsName(name || undefined);
+      } catch (error) {
+        console.warn('Error fetching ENS name:', error instanceof Error ? error.message : 'Unknown error');
+        setEnsName(undefined);
+      }
+    };
+    
+    getEnsName();
+  }, [address, chainId]);
+
+  // Function to add a custom token
+  const addCustomToken = (token: TokenInfo) => {
+    if (!address) {
+      console.error("Cannot add token: No wallet connected");
+      return;
+    }
+    
+    setCustomTokens((prev: Record<string, TokenInfo>) => ({
+      ...prev,
+      [token.address || token.symbol]: token
+    }));
+  };
+
+  // Function to remove a custom token
+  const removeCustomToken = (tokenAddressOrSymbol: string) => {
+    if (!address) {
+      console.error("Cannot remove token: No wallet connected");
+      return;
+    }
+    
+    setCustomTokens((prev: Record<string, TokenInfo>) => {
+      const updated = { ...prev };
+      delete updated[tokenAddressOrSymbol];
+      return updated;
+    });
+  };
+
+  // Return expanded wallet data with connection state
+  return {
+    isLoading: isLoadingBalance,
+    address: address?.toString(),
+    ensName,
+    tokens,
+    portfolio,
+    transactions,
+    approvals,
+    addCustomToken,
+    removeCustomToken,
+    customTokens: Object.values(customTokens),
+    connectionState,
+    connectionError,
+    formattedEthBalance,
+    ethBalance: walletEthBalance,
+    isLoadingBalance,
+    refetchWalletData: fetchWalletData,
+    refetch: fetchWalletData,
+  };
+} 

@@ -1,0 +1,481 @@
+---
+description: firebase and moralis api integration.
+globs: *.tsx. *.jsx, *.css, *.ts
+alwaysApply: false
+---
+Integrating Moralis API & SDK with Firebase in a Next.js Web3 Wallet
+
+Building a Web3 wallet with Next.js (TypeScript) and styling it with Tailwind CSS and shadcn/UI provides a modern developer experience. By integrating the Moralis Web3 API & SDK alongside Firebase, you can securely fetch on-chain data (balances, tokens, NFTs, transactions, etc.) and deliver it to your front-end. This guide will walk you through setting up Moralis and Firebase, making API calls to Moralis (with example requests and responses), and linking the data to your Next.js app’s UI. Each section includes the Moralis API endpoint, required query parameters, sample requests, and JSON responses, with references to Moralis’s official documentation for deeper insight.
+
+Overview of the Architecture
+
+In our architecture, the Next.js front-end will call a backend function (hosted via Firebase Cloud Functions or Next.js API routes) which in turn queries Moralis. This ensures the Moralis API Key remains secure (never exposed in the browser) and allows using Firebase services (like Firestore or Auth) in tandem if needed. The high-level flow is:
+
+Using a Firebase Cloud Function as a secure proxy between the Next.js front-end and Moralis API.
+	1.	Next.js Front-End – The user interacts with the web3 wallet UI (built with Tailwind CSS and shadcn components). For example, they connect their wallet (e.g. via MetaMask) to get their address.
+	2.	Firebase Cloud Function (Backend) – The front-end calls a Firebase function (or Next.js API route) with the wallet address and desired action. The function, running on a secure server, contains the Moralis API Key and uses Moralis SDK or REST API to fetch data.
+	3.	Moralis Web3 API – The backend function sends an HTTPS request to Moralis API endpoints (with the proper API Key in headers). Moralis returns blockchain data (balances, token info, NFT metadata, etc.) in JSON.
+	4.	Next.js Front-End – The backend returns the data to the front-end, which then renders it (e.g. displaying balances in a list, showing NFTs in a gallery, etc., using Tailwind for styling and shadcn/UI components for layout).
+
+By using Firebase Functions as a proxy, we secure the Moralis API Key and can integrate with Firebase Auth or Firestore if needed. Next, we’ll set up Moralis and Firebase, then dive into specific Moralis API calls.
+
+Setting Up Moralis API and SDK
+
+1. Get a Moralis API Key: Sign up for a Moralis account and obtain your Web3 API Key from the Moralis admin panel. In your Next.js app (or Firebase function), store this key securely. For example, use environment variables (e.g. in .env.local for Next.js, or use Firebase Secret Manager for cloud functions) so it’s not hard-coded. You’ll need this key for all Moralis API calls.
+
+2. Install Moralis SDK (Optional but Recommended): Moralis offers a JavaScript SDK that simplifies calling its APIs. Install it in your project: npm install moralis @moralisweb3/common-evm-utils. In a Node environment (Next.js API route or Firebase function), initialize the SDK with your API Key:
+
+import Moralis from "moralis";
+// ... in an async function or on startup:
+await Moralis.start({ apiKey: process.env.MORALIS_API_KEY });
+
+This one-liner configures the Moralis SDK with your key ￼. After this, you can call any API via the Moralis.EvmApi helpers. For example, Moralis.EvmApi.balance.getNativeBalance({...}) will call the native balance endpoint (we’ll see examples shortly).
+
+3. Set Up Firebase (for secure backend calls): Initialize a Firebase project if you haven’t. You’ll primarily use Firebase Cloud Functions to act as a secure backend. In your Firebase Functions project, install Moralis as above and initialize it with the API key (you can use functions.config() or Firebase’s environment configuration to store the key). For instance, in functions/index.ts:
+
+import * as functions from "firebase-functions";
+import Moralis from "moralis";
+
+// Initialize Moralis SDK with API key (ensure this is not exposed publicly)
+Moralis.start({ apiKey: functions.config().moralis.key });
+
+// Define a callable function to get data, e.g., native balance
+export const getBalance = functions.https.onCall(async (data, context) => {
+  const { address } = data;
+  const result = await Moralis.EvmApi.balance.getNativeBalance({
+    chain: "0x1",  // Ethereum mainnet
+    address: address,
+  });
+  return result.toJSON(); // return the API response data
+});
+
+In the above, functions.config().moralis.key would be set via the Firebase CLI (or you could use an environment variable). The function getBalance can be called from your front-end using Firebase SDK. For example, on the client:
+
+import { getFunctions, httpsCallable } from "firebase/functions";
+…
+const functions = getFunctions();
+const getBalanceFunc = httpsCallable(functions, 'getBalance');
+const response = await getBalanceFunc({ address: userAddress });
+console.log("Wallet balance:", response.data);
+
+This calls the cloud function which in turn calls Moralis. All Moralis API requests will be made in backend code, keeping the API key safe. The pattern will be similar for other data (tokens, NFTs, etc.): create a function for each or one generic function that calls different Moralis endpoints based on parameters.
+
+Alternatively, if you prefer not to use Firebase Cloud Functions, you can use Next.js API routes to achieve the same. For example, create an API route at pages/api/balance/[address].ts that reads the address and uses Moralis SDK or fetch to return JSON. The key point is to never expose the X-API-Key on the client side – always proxy through secure server code.
+
+With setup complete, let’s explore how to retrieve various types of blockchain data using Moralis. We’ll cover Wallet (Native) Balance, ERC-20 Token balances, NFTs, and Transaction history, with example API calls and responses. Each subsection also links to Moralis’s official documentation for reference.
+
+Fetching Wallet Data via Moralis API
+
+1. Get Native Balance (Wallet API)
+
+The native balance refers to the main cryptocurrency balance of the wallet (e.g. ETH balance for an Ethereum address, BNB for BSC, etc.). Moralis provides a straightforward endpoint for this:
+	•	Endpoint: GET /api/v2.2/:address/balance – where :address is the wallet address you want to query ￼.
+	•	Query Parameters:
+	•	chain – the blockchain network to query. This can be specified by name or chain ID. For example: eth or 0x1 for Ethereum Mainnet, 0x38 for BSC, 0x89 for Polygon, etc. ￼. If omitted, it may default to Ethereum (but it’s best to specify).
+	•	to_block (optional) – if you want the balance at a specific historical block number rather than the latest, you can provide a block number ￼. Usually you’ll omit this to get the latest balance.
+	•	Headers: You must include your Moralis API Key in the request header: X-API-Key: <YOUR_API_KEY>. Also include Accept: application/json if using a raw HTTP request ￼.
+
+Example Request: To get the ETH balance of address 0xDC24...7022 on Ethereum, you would call:
+
+GET https://deep-index.moralis.io/api/v2.2/0xDC24316b9AE028F1497c275EB9192a3Ea0f67022/balance?chain=eth 
+X-API-Key: YOUR_API_KEY
+Accept: application/json
+
+This can be done via fetch in Node.js, axios, or using Moralis SDK:
+
+const response = await Moralis.EvmApi.balance.getNativeBalance({
+  chain: "0x1",  // Ethereum
+  address: "0xDC24316b9AE028F1497c275EB9192a3Ea0f67022"
+});
+console.log(response.raw);
+
+(The above SDK call under the hood issues a GET request to the same endpoint ￼ ￼.)
+
+Sample Response: The response will be a JSON object with the balance in the chain’s smallest unit (wei for ETH). For example:
+
+{
+  "balance": "1234567890"
+}
+``` [oai_citation_attribution:7‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/get-native-balance#:~:text=200%20Returns%20the%20native%20balance,for%20a%20specific%20address)
+
+This indicates the address has a balance of `1234567890` wei (which is about 0.000000001234567890 ETH, since 1 ETH = 10^18 wei). In your app, you’d typically convert this to a human-readable format. Moralis returns it as a string to preserve precision. If you use the Moralis SDK’s `response.result` object, it may already provide convenience methods (e.g. `.balance.ether`) to get the value in ETH [oai_citation_attribution:8‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/integrations/firebase-nodejs#:~:text=const%20result%20%3D%20await%20Moralis.EvmApi.balance.getNativeBalance%28,balance%3A%20result.result.balance.ether%2C). In a simple case, you can do `Number(balance) / 1e18` or use a library like ethers.js to format it.
+
+*Usage in the app:* You might display the native balance at the top of the wallet dashboard. For example, using Tailwind and shadcn UI, you could have a card that says “**Balance:** 0.001234 ETH”. This value comes from the JSON response above. If you want to show the value in USD, you’ll need to fetch price data (discussed later or use the combined endpoint which we’ll cover).
+
+**Moralis Doc Reference:** Moralis documentation on [Get Native Balance by Wallet][official-native-bal-doc] provides more details and examples. 
+
+### 2. Get ERC-20 Token Balances (Wallet API / Token API)
+
+Most wallets hold not just the native coin but also ERC-20 tokens (fungible tokens). Moralis Wallet API can fetch all ERC-20 token balances for a given address:
+
+- **Endpoint:** `GET /api/v2.2/:address/erc20` – returns the list of ERC-20 tokens held by the address [oai_citation_attribution:9‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/wallet-api/get-token-balances-by-wallet#:~:text=Get%20ERC20%20Token%20Balance%20by,Wallet) [oai_citation_attribution:10‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/wallet-api/get-token-balances-by-wallet#:~:text=QUERY%20PARAMS).
+- **Query Parameters:**
+  - `chain` – required, which blockchain to query (e.g. `eth` for Ethereum, or other EVM chain IDs as in the native balance call) [oai_citation_attribution:11‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/wallet-api/get-token-balances-by-wallet#:~:text=chain%20string).
+  - `to_block` (optional) – to get balances at a specific block height (often not needed for latest) [oai_citation_attribution:12‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/wallet-api/get-token-balances-by-wallet#:~:text=to_block%20number).
+  - `token_addresses` (optional) – you can specify a list of token contract addresses to *filter* the results [oai_citation_attribution:13‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/wallet-api/get-token-balances-by-wallet#:~:text=token_addresses%20array). If provided, only those tokens’ balances will be returned. If not provided, all token balances are returned.
+  - `exclude_spam` (optional boolean) – Moralis can flag known scam/spam tokens; setting `exclude_spam=true` will filter those out from results [oai_citation_attribution:14‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/wallet-api/get-token-balances-by-wallet#:~:text=Add%20Item). By default this may be false (include all tokens).
+- **Headers:** Same as before, include `X-API-Key` and `Accept: application/json` in the request [oai_citation_attribution:15‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/wallet-api/get-token-balances-by-wallet#:~:text=%24response%20%3D%20%24client,Key%27%20%3D%3E%20%27YOUR_API_KEY%27%2C%20%5D%2C).
+
+**Example Request:** To get all ERC-20 balances of address `0x1f9090...6326` on Ethereum:
+
+GET https://deep-index.moralis.io/api/v2.2/0x1f9090aaE28b8a3dCeaDf281B0F12828e676c326/erc20?chain=eth
+X-API-Key: YOUR_API_KEY
+Accept: application/json
+
+Using the Moralis JS SDK, the equivalent call is:
+```ts
+const tokensResponse = await Moralis.EvmApi.token.getWalletTokenBalances({
+  chain: "0x1", 
+  address: "0x1f9090aaE28b8a3dCeaDf281B0F12828e676c326"
+});
+console.log(tokensResponse.raw);
+
+This will return an array of token balance objects.
+
+Sample Response: The response is an array of objects, each representing a token and the balance the user holds. For example, part of a response might look like:
+
+[
+  {
+    "token_address": "0x67b6d479c7bb412c54e03dca8e1bc6740ce6b99c",
+    "name": "Kylin Network",
+    "symbol": "KYL",
+    "logo": "https://cdn.moralis.io/eth/0x67b6...b99c.png",
+    "thumbnail": "https://cdn.moralis.io/eth/0x67b6...b99c_thumb.png",
+    "decimals": 6,
+    "balance": "123456789",
+    "possible_spam": false,
+    "verified_collection": false,
+    "total_supply": "10000000000000000",
+    "total_supply_formatted": "10000000000",
+    "percentage_relative_to_total_supply": 1.0035
+  }
+]
+``` [oai_citation_attribution:18‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/wallet-api/get-token-balances-by-wallet#:~:text=,6) [oai_citation_attribution:19‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/wallet-api/get-token-balances-by-wallet#:~:text=%5B%20%7B%20,https%3A%2F%2Fcdn.moralis.io%2Feth%2F0x67b6d479c7bb412c54e03dca8e1bc)
+
+In this example, the wallet holds **Kylin Network (KYL)** tokens:
+- `token_address` is the contract address of the token.
+- `name` and `symbol` give the token’s identity.
+- `logo` and `thumbnail` are URLs to the token’s images (hosted by Moralis CDN) which you can use in your app to display the token’s icon.
+- `decimals` is the number of decimal places the token uses. Here 6, meaning the smallest unit is 10^-6 of a token.
+- `balance` is the amount the wallet holds, in **raw units** (i.e., not adjusted for decimals). In this case `"123456789"` with 6 decimals means the user has 123.456789 KYL.
+- `possible_spam` – if true, Moralis suspects this token might be spam (false here, KYL is legitimate).
+- `verified_collection` – (for NFTs mainly; not relevant for fungible tokens, usually false or empty here).
+- `total_supply` and related fields – the token’s total supply in raw and formatted form, and what percentage of the total supply this wallet’s balance represents. (In this example, `percentage_relative_to_total_supply: 1.0035` means the wallet holds ~1.0035% of the token’s total supply – likely just example data).
+
+Your app can iterate over this array to list all tokens in the wallet. For each token, you’d typically display the name/symbol, format the balance using `decimals`, and maybe show the logo. For instance, a UI table with columns *Token*, *Balance*, *Value (USD)* (we’ll get to USD value next). Using Tailwind, you can make a responsive list, and with shadcn UI components you might use an `Avatar` for the logo and some `Badge` or text for the symbol.
+
+**Moralis Doc Reference:** See Moralis docs on [Get ERC20 token balance by wallet][official-erc20-bal-doc] for more details and examples of this endpoint.
+
+**🔹 Tip:** *Getting USD Value:* The above data does not directly include fiat values. To get the USD price of each token, you have two approaches:
+1. Use the Moralis **Token Price API** for each token contract (endpoint `GET /erc20/:address/price`). For example, querying KYL’s contract on Ethereum would return fields like `usdPrice` and `nativePrice` [oai_citation_attribution:20‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/get-token-price#:~:text=address%20string%20required) [oai_citation_attribution:21‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/get-token-price#:~:text=%7B%20,0.8842730258590583). This approach requires one call per token (or a batch endpoint for multiple).
+2. Use Moralis’s combined endpoint that returns balances **with prices** – see next section.
+
+### 3. Get Token Balances *with* Prices (Combined Wallet Token API)
+
+Moralis provides a convenient combined endpoint to fetch a wallet’s native balance *and all token balances with their USD prices* in one call. This is essentially “wallet net worth” data.
+
+- **Endpoint:** `GET /api/v2.2/wallets/:address/tokens` – returns native coin and ERC-20 balances plus price info [oai_citation_attribution:22‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/wallet-api/get-wallet-token-balances-price#:~:text=Get%20Native%20%26%20ERC20%20Token,Balances%20by%20Wallet) [oai_citation_attribution:23‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/wallet-api/get-wallet-token-balances-price#:~:text=QUERY%20PARAMS).
+- **Query Params:** Same as the separate endpoints – `chain` is required; optional filtering like `token_addresses`, `exclude_spam`, etc., and you can also exclude the native balance if you only want tokens (`exclude_native=true`) [oai_citation_attribution:24‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/wallet-api/get-wallet-token-balances-price#:~:text=The%20desired%20page%20size%20of,the%20result). Pagination params (`cursor`, `limit`) exist in case the wallet holds many tokens [oai_citation_attribution:25‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/wallet-api/get-wallet-token-balances-price#:~:text=cursor%20string) [oai_citation_attribution:26‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/wallet-api/get-wallet-token-balances-price#:~:text=limit%20number).
+- **Headers:** Use `X-API-Key` as usual.
+
+**Example Request:** 
+
+GET https://deep-index.moralis.io/api/v2.2/wallets/0xcB1C1FdE09f811B294172696404e88E658659905/tokens?chain=eth
+X-API-Key: YOUR_API_KEY
+
+This will retrieve Ethereum wallet `0xcB1C1F...9905` balances and token prices. In SDK form:
+```ts
+const portfolio = await Moralis.EvmApi.wallets.getWalletTokenBalancesPrice({
+  address: "0xcB1C1FdE09f811B294172696404e88E658659905",
+  chain: "0x1"
+});
+console.log(portfolio.raw);
+
+Sample Response: This returns an object with pagination info and a result array of token objects. Each token object extends the earlier token balance format with additional fields like usd_price and usd_value. For example:
+
+{
+  "cursor": "",
+  "page": 0,
+  "page_size": 100,
+  "result": [
+    {
+      "token_address": "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+      "symbol": "ETH",
+      "name": "Ether",
+      "logo": "https://cdn.moralis.io/eth/0x.png",
+      "thumbnail": "https://cdn.moralis.io/eth/0x_thumb.png",
+      "decimals": 18,
+      "balance": "360659174684349604",
+      "possible_spam": false,
+      "verified_contract": true,
+      "balance_formatted": "0.360659174684349604",
+      "usd_price": 3725.2775921204284,
+      "usd_price_24hr_percent_change": 1.20286,
+      "usd_price_24hr_usd_change": 44.80992138289679,
+      "usd_value": 1343.5555418442548,
+      "usd_value_24hr_usd_change": 16.161109263626145,
+      "native_token": true,
+      "portfolio_percentage": 55.7292
+    },
+    … (other tokens)
+  ]
+}
+``` [oai_citation_attribution:27‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/wallet-api/get-wallet-token-balances-price#:~:text=,0.360659174684349604) [oai_citation_attribution:28‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/wallet-api/get-wallet-token-balances-price#:~:text=,55.7292%20%7D)
+
+In the above example (which shows ETH and possibly other tokens in the result array):
+- The **native token ETH** is represented with a special `token_address` (`0xEeeeeE...EeE` is a placeholder used by Moralis for native coins). It has `symbol: "ETH"`, `decimals: 18`, and the `balance` in wei. Notably, it provides `balance_formatted` which is the ETH balance in ether (0.360659... ETH in this case) [oai_citation_attribution:29‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/wallet-api/get-wallet-token-balances-price#:~:text=,44.80992138289679).
+- `usd_price` for ETH is ~3725.27 (meaning 1 ETH = $3725.27 at the time of data).
+- `usd_value` is the total value of this holding (0.360659 * 3725.27 ≈ 1343.56 USD) [oai_citation_attribution:30‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/wallet-api/get-wallet-token-balances-price#:~:text=,true).
+- The change fields show ETH’s price is up ~1.20% in 24h, corresponding to a ~$16 increase on this holding.
+- `portfolio_percentage` indicates this ETH makes up 55.7292% of the wallet’s total value. This implies the wallet has other tokens making up the rest ~44.27%.
+
+For any ERC-20 tokens in the result, you would similarly get `usd_price` and `usd_value` for each. Using this single response, you can display not only the token balances but also their fiat values. Many wallet UIs show the total portfolio value – you can sum up all `usd_value` fields or sometimes Moralis might provide a net-worth endpoint. In absence of a direct sum, summing `usd_value` of each entry gives the wallet’s total value. In our example, if ETH is 55.7%, the rest 44.3% could be other tokens – you’d sum them to get 100%.
+
+**Usage in UI:** With this data, you can create a “Portfolio” section. For example, a card showing **Total Value: $2,410** (sum of USD values), and a list or pie chart of assets by percentage. The shadcn UI library could be used to create a nice table or even integrate chart libraries for a portfolio breakdown.
+
+**Moralis Doc Reference:** Official docs for [Get Native & ERC20 Token Balances by Wallet][official-portfolio-doc] correspond to this combined endpoint.
+
+### 4. Get NFT Holdings (NFT API)
+
+For NFT support, Moralis can list all NFTs (ERC-721 or ERC-1155 tokens) owned by a wallet. This is useful to display an NFT gallery or collectibles section in your wallet app.
+
+- **Endpoint:** `GET /api/v2.2/:address/nft` – gets NFTs owned by the given address [oai_citation_attribution:31‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/wallet-api/get-nfts-by-wallet#:~:text=GET%20https%3A%2F%2Fdeep).
+- **Query Parameters:**
+  - `chain` – the chain to query, e.g. `eth` (Ethereum), `polygon`, etc. Moralis supports multiple EVM chains for NFTs too [oai_citation_attribution:32‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/wallet-api/get-nfts-by-wallet#:~:text=chain%20string).
+  - `format` – format of the token ID in the response, either `decimal` or `hex` [oai_citation_attribution:33‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/wallet-api/get-nfts-by-wallet#:~:text=format%20string). Decimal is usually easier to work with for NFT IDs.
+  - `limit` – the number of NFT items to return per page (if the wallet has many NFTs, results are paginated) [oai_citation_attribution:34‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/wallet-api/get-nfts-by-wallet#:~:text=decimal%20hex). Default might be 100.
+  - `cursor` – if you have more than one page of results, you use the `cursor` from a previous response to get the next page [oai_citation_attribution:35‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/wallet-api/get-nfts-by-wallet#:~:text=cursor%20string).
+  - `token_addresses` (optional) – if you want to filter to NFTs from specific contract addresses (you can supply a list) [oai_citation_attribution:36‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/wallet-api/get-nfts-by-wallet#:~:text=token_addresses%20array).
+  - `exclude_spam` – similar concept as tokens; exclude known spam NFTs if true [oai_citation_attribution:37‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/wallet-api/get-nfts-by-wallet#:~:text=exclude_spam%20boolean).
+  - `normalizeMetadata` – boolean, if true, Moralis will attempt to fetch and normalize the NFT metadata into a standard format [oai_citation_attribution:38‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/wallet-api/get-nfts-by-wallet#:~:text=normalizeMetadata%20boolean). This is very handy: when true, the `normalized_metadata` field in the response will contain the NFT’s metadata (name, description, image URL, etc.) in a consistent JSON structure regardless of the NFT collection’s own metadata format. If false, you may get a raw `metadata` string (which could be JSON or could be blank if not yet fetched) and a `token_uri` that you would need to fetch yourself.
+  - `media_items` – boolean, if true, Moralis might return additional media information (like an image preview) in the response [oai_citation_attribution:39‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/wallet-api/get-nfts-by-wallet#:~:text=false%20true). This is an advanced feature for getting media content directly; often not needed if you have the metadata.
+- **Headers:** As usual, include the API key. 
+
+**Example Request:** To get NFTs of a wallet (e.g., `0xff3879...3c1e`) on Ethereum, you can call:
+
+GET https://deep-index.moralis.io/api/v2.2/0xff3879b8a363aed92a6eaba8f61f1a96a9ec3c1e/nft?chain=eth&format=decimal&normalizeMetadata=true&limit=100
+X-API-Key: YOUR_API_KEY
+
+This asks for up to 100 NFTs, with metadata normalized. Using the Moralis SDK:
+```ts
+const nftResponse = await Moralis.EvmApi.nft.getWalletNFTs({
+  address: "0xff3879b8a363aed92a6eaba8f61f1a96a9ec3c1e",
+  chain: "0x1",
+  format: "decimal",
+  normalizeMetadata: true,
+  limit: 100
+});
+console.log(nftResponse.raw);
+
+Moralis will index the NFT contracts on the fly if not already indexed (note: the first time you query a new NFT collection, Moralis may return "status": "SYNCING" meaning it’s fetching data, and you might need to retry after a short delay).
+
+Sample Response: The NFT response includes pagination info (total, page, etc.) and a result array (list of NFT objects). For example:
+
+{
+  "status": "SYNCED",
+  "total": "5",
+  "page": "0",
+  "page_size": "5",
+  "cursor": null,
+  "result": [
+    {
+      "token_address": "0xb47e3cd837dDF8e4c57F05d70Ab865de6e193BBB",
+      "token_id": "15",
+      "contract_type": "ERC721",
+      "owner_of": "0x057Ec652A4F150f7FF94f089A38008f49a0DF88e",
+      "block_number": "88256",
+      "block_number_minted": "77160",
+      "token_uri": "https://api.cryptokitties.co/kitty/15",
+      "metadata": "{\"name\":\"Genesis Cat\",\"image\":\"https://...\"}",
+      "normalized_metadata": {
+         "name": "Genesis Cat",
+         "image": "https://...",
+         "attributes": [ ... ],
+         "description": "CryptoKitty #15 - Genesis"
+      },
+      "amount": "1",
+      "name": "CryptoKitties",
+      "symbol": "CK",
+      "last_metadata_sync": "2021-02-24T00:47:26.647Z",
+      "possible_spam": false,
+      "verified_collection": false
+    }
+  ]
+}
+
+This example (for illustration) shows one NFT from the CryptoKitties collection:
+	•	token_address: the contract address of the NFT collection (CryptoKitties contract).
+	•	token_id: the NFT’s identifier (15 in decimal).
+	•	contract_type: ERC721 (could also be ERC1155 for semi-fungibles).
+	•	owner_of: the address that owns this NFT (should match the queried wallet address).
+	•	block_number and block_number_minted: the block when it was last transferred and when it was minted.
+	•	token_uri: the original token URI where metadata is hosted (if any).
+	•	metadata: the raw metadata string (if Moralis has fetched it). In this case it’s a JSON string containing name and image.
+	•	normalized_metadata: since we set normalizeMetadata=true, Moralis parsed the metadata into a standard JSON. Here we see a name, image, attributes, description, etc., nicely structured. This is extremely useful for directly displaying the NFT information without worrying about the varying standards of NFT metadata. If the metadata was empty or in different format, normalized_metadata ensures a consistent structure as best as possible.
+	•	amount: “1” (for ERC721, always 1; for ERC1155, could be more if the user holds multiple copies of the same token ID).
+	•	name and symbol: the collection’s name and symbol (CryptoKitties, CK).
+	•	last_metadata_sync: timestamp of when Moralis last refreshed the metadata.
+	•	possible_spam / verified_collection: flags regarding the collection’s trustworthiness (false in this case).
+
+If the wallet had multiple NFTs, result would contain multiple objects. The total field indicates how many NFTs in total the wallet has (5 in this case) ￼, and since we limited to 5 per page, it fits in one page. If there were more, cursor would be non-null and you’d use it to fetch next page.
+
+Usage in UI: You can use this data to display an NFT gallery. For each NFT, you likely want to show its image and name. Using the normalized_metadata.image URL, you can display the NFT’s image. Moralis often caches images (sometimes the URL might be an IPFS link or an HTTP link to the NFT’s image). Ensure your app can handle IPFS (e.g., convert ipfs:// URIs to a gateway URL if needed). With Tailwind and shadcn, you could use an image component or card component to show the NFT. For example, a grid of cards each showing an image, the name (e.g., “Genesis Cat”), maybe the collection name, etc.
+
+Moralis Doc Reference: See Get NFTs by wallet in Moralis docs for more details. The docs note that the first call may initiate indexing for new NFT contracts ￼, and you can use token_address param to query specific collections if desired.
+
+5. Get Transaction History (Wallet API)
+
+A wallet isn’t complete without a transaction history. Moralis can fetch transactions involving the address. This can include native cryptocurrency transfers and optionally internal transactions. There are also separate endpoints for token transfers (ERC-20 and NFT transfers), but here we’ll illustrate the basic native transaction history.
+	•	Endpoint: GET /api/v2.2/:address – Note: this base endpoint returns native transactions for the address, ordered by block (desc by default) ￼.
+	•	Query Parameters:
+	•	chain – the chain to query (e.g., eth, 0x1, etc.) ￼.
+	•	Filtering by block or date:
+	•	from_block / to_block – to get transactions between certain block numbers ￼.
+	•	from_date / to_date – to get transactions in a date range (if both block and date are provided, block takes precedence) ￼.
+	•	cursor & limit – for pagination if there are many transactions ￼ ￼.
+	•	order – “asc” or “desc” for chronological or reverse order (default is descending, latest first) ￼.
+	•	include – set to internal_transactions if you want internal transactions included in the results ￼. Internal transactions are those triggered within a contract (value transfers inside smart contract execution), which normally aren’t visible on a simple address txn list but Moralis can include them.
+	•	Headers: As usual, include X-API-Key.
+
+Example Request: To get recent Ethereum transactions for 0xd4a3BebD824189481FC45363602b83C9c7e9cbDf:
+
+GET https://deep-index.moralis.io/api/v2.2/0xd4a3BebD824189481FC45363602b83C9c7e9cbDf?chain=eth&limit=50
+X-API-Key: YOUR_API_KEY
+
+This would fetch the last 50 transactions. In SDK form:
+
+const txResponse = await Moralis.EvmApi.transaction.getWalletTransactions({
+  address: "0xd4a3BebD824189481FC45363602b83C9c7e9cbDf",
+  chain: "0x1",
+  limit: 50
+});
+console.log(txResponse.raw);
+
+Sample Response: The response will contain an array of transaction objects and pagination info. For example (truncated for brevity):
+
+{
+  "page": 0,
+  "page_size": 50,
+  "cursor": "string",
+  "result": [
+    {
+      "hash": "0x057Ec652A4F150f7FF94f089A38008f49a0DF88e",
+      "nonce": "326595425",
+      "transaction_index": "25",
+      "from_address": "0xd4a3BebD824189481FC45363602b83C9c7e9cbDf",
+      "from_address_entity": "Opensea",
+      "from_address_entity_logo": "https://opensea.io/favicon.ico",
+      "from_address_label": "Binance 1",
+      "to_address": "0xa71db868318f0a0bae9411347cd4a6fa23d8d4ef",
+      "to_address_entity": "Beaver Build",
+      "to_address_entity_logo": "https://beaverbuild.com/favicon.ico",
+      "to_address_label": "Binance 2",
+      "value": "650000000000000000",
+      "gas": "6721975",
+      "gas_price": "20000000000",
+      "input": "0x...",
+      "receipt_cumulative_gas_used": "1340925",
+      "receipt_gas_used": "1340925",
+      "receipt_contract_address": "0x1d6a4cf64b52f6c73f201839aded7379ce58059c",
+      "receipt_status": "1",
+      "block_timestamp": "2021-04-02T10:07:54.000Z",
+      "block_number": "12526958",
+      "block_hash": "0x0372c302e3c52e8f...253b20fd86",
+      "internal_transactions": [
+        {
+          "transaction_hash": "0x057Ec652A4F150f7FF94f089A38008f49a0DF88e",
+          "block_number": "12526958",
+          "from": "0xd4a3BebD824189481FC45363602b83C9c7e9cbDf",
+          "to": "0xa71db868318f0a0bae9411347cd4a6fa23d8d4ef",
+          "value": "650000000000000000",
+          "gas": "6721975",
+          "gas_used": "6721975",
+          "input": "0x",
+          "output": "0x"
+        }
+      ]
+    },
+    ... (more transactions)
+  ]
+}
+``` [oai_citation_attribution:50‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/wallet-api/get-transactions-by-wallet#:~:text=,Beaver%20Build) [oai_citation_attribution:51‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/wallet-api/get-transactions-by-wallet#:~:text=,0x1d6a4cf64b52f6c73f201839aded7379ce58059c)
+
+Each transaction object has a lot of data:
+- `hash`: the transaction hash (unique ID).
+- `from_address` / `to_address`: the sender and recipient. In this example, the from address is the one we queried. Notice Moralis enriched the data with some labels:
+  - `from_address_entity` and `from_address_label` indicating the from address is known (Opensea, labeled as "Binance 1"? possibly an example) [oai_citation_attribution:52‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/wallet-api/get-transactions-by-wallet#:~:text=,https%3A%2F%2Fbeaverbuild.com%2Ffavicon.ico). Moralis has an “entity” API that can label known addresses (like exchanges or contracts) for convenience. Similarly `to_address_entity`/`label` for the recipient.
+- `value`: amount of native crypto transferred in wei (0.65 ETH in this case, since 650000000000000000 wei = 0.65 ETH).
+- `gas`, `gas_price`: info about gas used and price in wei.
+- `input`: the input data (for contract calls; `"0x"` if none).
+- Various receipt fields (cumulative gas, contract_address if a contract was created, status etc).
+- `block_timestamp`, `block_number`, `block_hash`: when and where this txn was included.
+- `internal_transactions`: If we requested to include them, this array will list any internal transactions. In this example, it shows essentially the same transfer as an internal tx (perhaps because the example might be a contract call that resulted in a transfer). Internal txns have similar fields (from, to, value, etc.) [oai_citation_attribution:53‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/wallet-api/get-transactions-by-wallet#:~:text=,0x057Ec652A4F150f7FF94f089A38008f49a0DF88e) [oai_citation_attribution:54‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/wallet-api/get-transactions-by-wallet#:~:text=).
+
+To display a transaction history in your app, you might show a list of transactions with date, from/to, amount, and status. If the user is the sender or receiver, you might label it accordingly (“Sent 0.65 ETH to 0xa71d...d4ef on 2021-04-02”). The Moralis data can help identify if an address is known (e.g., if sending to an exchange). For formatting the value, convert `value` from wei to ETH (divide by 1e18). You can also use the `block_timestamp` to show a formatted date/time (it’s in ISO string).
+
+**Moralis Doc Reference:** See [Get native transactions by wallet][official-tx-doc] in Moralis docs. Moralis also offers a **Wallet History** endpoint (fully decoded transactions with labels and even price impacts) – an advanced option referenced in their docs [oai_citation_attribution:55‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/wallet-api/get-transactions-by-wallet#:~:text=New%20Endpoint%20Available). For most purposes, the basic transactions endpoint or the token/NFT transfer endpoints suffice.
+
+### 6. Additional APIs and Considerations
+
+Beyond the core data above, Moralis offers other APIs you might integrate depending on your wallet’s features:
+
+- **Token Metadata API:** If you need details about a specific token (name, symbol, decimals, logo) and you didn’t get it from the balance endpoint (for example, if you want info on a token the user *doesn’t* hold yet), you can use `GET /erc20/metadata` or `GET /erc20/metadata/symbols` endpoints [oai_citation_attribution:56‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/token-api#:~:text=No,index.moralis.io%2Fapi%2Fv2.2%2Fdiscovery%2Ftoken%20deep). These let you query by contract or symbol to get token info.
+- **Token Price API:** As mentioned, you can get price for any token by its address using `GET /erc20/:address/price` [oai_citation_attribution:57‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/token-api#:~:text=Get%20Token%20Price). The response includes `usdPrice` and other data [oai_citation_attribution:58‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/get-token-price#:~:text=%7B%20,0.8842730258590583%22%2C%20%22exchangeAddress%22%3A%20%220x1f98431c8ad98523631ae4a59f267346ea31f984). This is useful if you want to fetch price for tokens on demand or if you’re not using the combined balance endpoint.
+- **NFT Metadata API:** If you want to retrieve metadata for a specific NFT (contract + token id), Moralis has endpoints like `GET /nft/:address/:token_id/metadata` and even a metadata re-sync endpoint [oai_citation_attribution:59‡forum.moralis.io](mdc:https:/forum.moralis.io/t/solved-retrieve-new-prefix-url-from-nfts-collection/22131#:~:text=cryptokid%20%20January%2025%2C%202023%2C,2) if data is outdated. In most cases, `getWalletNFTs` with normalized metadata should suffice.
+- **Historical Token Transfers:** You can get ERC-20 transfer history for the wallet using `GET /:address/erc20/transfers` [oai_citation_attribution:60‡docs.moralis.com](mdc:https:/docs.moralis.com/web3-data-api/evm/reference/token-api#:~:text=Get%20Token%20Transfers), and NFT transfer history with `GET /:address/nft/transfers`. These are similar to the main txn history but filtered for token transfers.
+- **User Authentication (Moralis Auth + Firebase):** If your app requires the user to log in with their wallet, Moralis has an Auth API that works by issuing a challenge message for the user to sign and then verifying it. This can be integrated with Firebase Auth by using a custom token or simply by trusting the Moralis verification. Moralis even provides a Firebase Extension for Web3 auth [oai_citation_attribution:61‡moralisweb3.github.io](mdc:https:/moralisweb3.github.io/Moralis-JS-SDK/demos/firebase-auth-ext/#:~:text=TypeScript%29%20moralisweb3,Auth%20extension%20for%20the%20Firebase). In short, the flow is: user clicks "Login with Wallet", your front-end uses Moralis Auth (or a custom implementation) to get a message, user signs it with MetaMask, you send that to a Firebase Function that calls Moralis to verify the signature and get the user’s address profile. You could then create a Firebase Auth Custom Token with that address as UID, allowing the user to be authenticated in Firebase as well. This is a more advanced topic, but worth noting if you need secure login. (If your wallet app is purely client-side with MetaMask, you might not need Firebase Auth at all – you might just use Firebase for its database or functions.)
+
+- **Using Firestore for Caching/Data:** You may choose to store some of the fetched data in Firebase Firestore for quick access or to implement notifications. For example, after fetching NFTs, you could cache them in Firestore and set up a cron job or Moralis Streams (webhooks) to update when new transactions occur. This can reduce direct API calls if the data doesn’t need to be real-time always.
+
+- **Moralis Rate Limits & Performance:** Keep in mind Moralis has rate limits depending on your plan. Using a serverless function adds a slight overhead (the call from front-end to function), but it protects your key. Make sure to handle errors (e.g., if Moralis returns an error or rate-limit response). Moralis responses typically have HTTP status codes and error messages if something goes wrong.
+
+## Integrating Data into the Next.js Front-End
+
+Once you have the data from Moralis (via your Firebase functions or API routes), integrating it in Next.js is straightforward:
+
+- **Fetching Data:** You can call your Firebase function in a React component or via Next.js data fetching methods. For example, using React hooks, you might call the function on component mount or in response to user connecting a wallet. Alternatively, if you want to pre-render some data, you could use `getServerSideProps` in a page that calls Moralis (server-side) and passes the data as props. However, in a wallet context, data is user-specific, so server-side pre-render might not be as relevant (unless generating a static profile page, etc.). Most likely, you’ll fetch on the client after the user connects their wallet.
+
+- **State Management:** Upon getting the response JSON, update your React state (e.g., set a `balance` state, `tokens` array state, etc.). This will trigger re-render and display updated values. It’s good to show a loading state while fetching (you can use a shadcn skeleton or spinner with Tailwind).
+
+- **UI Components:** Tailwind CSS provides utility classes to style the output (spacing, typography, color). shadcn/UI comes with pre-built components that can help structure the info:
+  - Use **Cards** or **List** components to display sections like balance overview, token list, transaction list.
+  - Use **Table** components for a clean tabular view of token balances or transactions.
+  - Use **Avatar** or **Image** components to display token logos or NFT images (you have URLs from Moralis for those).
+  - Use **Badge** or **pill** style elements to indicate things like percentage change (e.g., green badge for +1.2%, red for -0.5%).
+  - Ensure responsiveness by using Tailwind breakpoints so that on mobile the wallet info stacks neatly (perhaps a column layout) and on desktop it can show more columns.
+
+For example, you might have a React component `WalletOverview` that fetches the native balance and token values and then renders something like:
+```jsx
+<Card>
+  <CardHeader>
+    <CardTitle>Total Portfolio Value</CardTitle>
+    <CardDescription>{ totalValueUSD ? `$${totalValueUSD.toFixed(2)}` : 'Loading...' }</CardDescription>
+  </CardHeader>
+  <CardContent>
+    <ul>
+      {tokens.map(token => (
+        <li key={token.token_address} className="flex items-center justify-between py-2">
+          <span className="flex items-center">
+            <Avatar src={token.logo} alt={token.symbol} className="mr-2" />
+            {token.name} ({token.symbol})
+          </span>
+          <span>{Number(token.balance_formatted || token.balance).toFixed(4)} {token.symbol}</span>
+          <span>${token.usd_value?.toFixed(2) || '—'}</span>
+        </li>
+      ))}
+    </ul>
+  </CardContent>
+</Card>
+
+(The above is a simplified illustration – in practice you’d include proper error handling and maybe pagination for transactions or NFTs.)
+
+References
+
+Each Moralis API used above is documented in Moralis’s official docs. You can refer to the Moralis documentation for deeper dives or additional options:
+	•	Moralis Wallet API – Native Balance: Official docs on getting native balance by wallet ￼.
+	•	Moralis Wallet API – Token Balances: See get ERC20 token balances by wallet for more details ￼ and the combined wallet token balances & prices endpoint ￼.
+	•	Moralis NFT API – Get Wallet NFTs: Official docs for getting NFTs by wallet ￼ (includes info on metadata normalization).
+	•	Moralis Wallet API – Transactions: See get native transactions by wallet in docs ￼, and consider the newer “Wallet History” for enriched data.
+	•	Moralis Auth API – Firebase integration: If implementing wallet authentication, refer to Moralis’s guide on Firebase integration which shows how to use Firebase Functions as a proxy (as we summarized)
+
+<!-- Reference Links -->

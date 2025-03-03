@@ -2,99 +2,88 @@
 
 import { useState, useEffect } from 'react';
 import { Button } from "@/components/ui/button";
-import { useWeb3Modal } from '@web3modal/wagmi/react';
-import { useAccount, useDisconnect } from 'wagmi';
-import { ChevronDown, Wallet, LogOut, Copy, CheckCircle2 } from "lucide-react";
-import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator
-} from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { ChevronDown, Copy, LogOut } from "lucide-react";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useWalletConnection } from "@/lib/hooks/use-wallet-connection";
 
 export function Web3ModalButton() {
   const [mounted, setMounted] = useState(false);
+  const [isCopied, setIsCopied] = useState(false);
+  
+  // Get wallet connection state and functions
+  const {
+    isConnected,
+    isInitialized,
+    isLoading,
+    isConnecting,
+    walletAddress,
+    connectionMethod,
+    connect,
+    disconnect,
+    formatAddress
+  } = useWalletConnection();
   
   // Only render after component is mounted on client-side
   useEffect(() => {
     setMounted(true);
   }, []);
   
+  // Function to copy address to clipboard
+  const handleCopy = async () => {
+    if (!walletAddress) return;
+    
+    try {
+      await navigator.clipboard.writeText(walletAddress);
+      setIsCopied(true);
+      toast.success("Address copied to clipboard");
+      setTimeout(() => setIsCopied(false), 2000);
+    } catch (err) {
+      toast.error("Failed to copy address");
+    }
+  };
+  
   // Don't render anything until client-side
-  if (!mounted) {
+  if (!mounted || !isInitialized) {
     return (
       <Button 
-        variant="secondary" 
-        className="flex items-center gap-2 rounded-lg border border-white/5 px-2 sm:px-3 py-2"
-        disabled
+        variant="outline" 
+        size="sm" 
+        disabled 
+        className="h-9 bg-secondary/50 border border-white/5 flex items-center gap-2"
       >
         <div className="h-4 w-4 rounded-full bg-secondary animate-pulse" />
         <span className="hidden sm:inline">Loading...</span>
-        <ChevronDown className="h-4 w-4 text-muted-foreground" />
+        <ChevronDown className="h-4 w-4 opacity-50" />
       </Button>
     );
   }
   
-  return <WalletConnectContent />;
-}
-
-// Separate component to handle wallet connection logic
-function WalletConnectContent() {
-  const { open } = useWeb3Modal();
-  const { address, isConnected } = useAccount();
-  const { disconnect } = useDisconnect();
-  const [copied, setCopied] = useState(false);
-  
-  const handleCopy = async () => {
-    if (!address) return;
-    
-    try {
-      await navigator.clipboard.writeText(address);
-      setCopied(true);
-      toast.success("Wallet address copied to clipboard");
-      setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      toast.error("Failed to copy wallet address");
-    }
-  };
-  
-  // Format address to display abbreviated version
-  const formatAddress = (addr: string | undefined) => {
-    if (!addr) return "Connected";
-    return `${addr.substring(0, 6)}...${addr.substring(addr.length - 4)}`;
-  };
-  
-  const handleConnect = async () => {
-    try {
-      await open();
-    } catch (error) {
-      console.error(error);
-    }
-  };
-  
-  const handleDisconnect = async () => {
-    try {
-      disconnect();
-      toast.success("Wallet disconnected");
-    } catch (error) {
-      toast.error("Failed to disconnect wallet");
-      console.error(error);
-    }
-  };
-  
   // If not connected, show connect button
-  if (!isConnected) {
+  if (!isConnected || !walletAddress) {
     return (
-      <Button 
-        variant="secondary" 
-        className="flex items-center gap-2 rounded-lg border border-white/5 px-2 sm:px-3 py-2" 
-        onClick={handleConnect}
+      <Button
+        onClick={connect}
+        variant="outline"
+        size="sm"
+        disabled={isConnecting || isLoading}
+        className={cn(
+          "transition-all duration-200 h-9 gap-2",
+          isConnecting ? "w-36" : "w-40"
+        )}
       >
-        <Wallet className="h-4 w-4" />
-        <span className="hidden sm:inline">Connect Wallet</span>
-        <ChevronDown className="h-4 w-4 text-muted-foreground" />
+        {isConnecting ? (
+          <>
+            <div className="h-4 w-4 rounded-full border-2 border-white/20 border-t-white animate-spin" />
+            <span>Connecting...</span>
+          </>
+        ) : (
+          <>
+            <span>Connect Wallet</span>
+          </>
+        )}
       </Button>
     );
   }
@@ -103,33 +92,49 @@ function WalletConnectContent() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="secondary" className="flex items-center gap-2 rounded-lg border border-white/5 px-2 sm:px-3 py-2">
-          <div className="h-4 w-4 bg-primary rounded-lg" />
-          <span className="hidden sm:inline">{formatAddress(address)}</span>
-          <ChevronDown className="h-4 w-4 text-muted-foreground" />
+        <Button 
+          variant="outline" 
+          size="sm" 
+          className="h-9 gap-2 flex items-center"
+        >
+          <div className={cn(
+            "h-3 w-3 rounded-full", 
+            {
+              "bg-blue-400": connectionMethod === 'walletconnect',
+              "bg-orange-400": connectionMethod === 'metamask',
+              "bg-green-400": connectionMethod === 'web3auth',
+              "bg-purple-400": connectionMethod === 'injected',
+              "bg-gray-400": connectionMethod === 'unknown' || connectionMethod === 'wagmi'
+            }
+          )} />
+          <span>{formatAddress(walletAddress)}</span>
+          <ChevronDown className="h-4 w-4 opacity-70" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
-        <div className="flex items-center justify-between px-3 py-2 text-sm font-medium text-muted-foreground">
-          <span>Connected Wallet</span>
-        </div>
-        <DropdownMenuSeparator />
-        <div className="px-3 py-2">
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-xs text-muted-foreground">Address</span>
-            <Button variant="ghost" size="icon" className="h-5 w-5" onClick={handleCopy}>
-              {copied ? 
-                <CheckCircle2 className="h-3 w-3 text-green-500" /> : 
-                <Copy className="h-3 w-3" />
-              }
+        <div className="flex flex-col space-y-1 p-2">
+          <p className="text-xs text-muted-foreground px-2">Connected Wallet</p>
+          <div className="flex items-center justify-between rounded-md p-2 text-sm bg-secondary/50">
+            <span className="font-medium">{formatAddress(walletAddress)}</span>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={handleCopy}
+            >
+              <Copy className={cn("h-4 w-4", isCopied ? "text-green-500" : "")} />
             </Button>
           </div>
-          {address && <div className="truncate font-mono text-xs">{address}</div>}
+          <p className="text-xs text-muted-foreground px-2 capitalize">
+            {connectionMethod === 'wagmi' ? 'Web3Modal' : connectionMethod} wallet
+          </p>
         </div>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={handleDisconnect} className="text-destructive focus:text-destructive cursor-pointer">
-          <LogOut className="mr-2 h-4 w-4" />
-          <span>Disconnect</span>
+        <DropdownMenuItem 
+          className="text-destructive focus:text-destructive flex items-center gap-2"
+          onClick={disconnect}
+        >
+          <LogOut className="h-4 w-4" />
+          <span>Disconnect Wallet</span>
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

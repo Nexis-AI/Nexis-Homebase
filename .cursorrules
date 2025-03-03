@@ -1,0 +1,857 @@
+# Integrating Moralis API & Firebase in a Next.js Web3 Wallet (TypeScript) with Tailwind & Shadcn
+
+# This guide covers how to build a Web3 wallet dashboard in Next.js (TypeScript) that integrates Moralis Web3 API/SDK with Firebase, using Web3Auth and WalletConnect for authentication. We’ll also use Tailwind CSS and Shadcn UI for styling. The documentation is organized into sections covering setup, integration of each component (Auth, Moralis APIs, Firebase), optimization, and project structure, with code snippets and best practices throughout.
+
+## Directory structure
+# Nexis Dashboard Project Directory Structure
+
+## Root Directory
+- `.cursor/` - Cursor IDE configuration
+- `.git/` - Git repository data
+- `.next/` - Next.js build output
+- `app/` - Main application pages and routes
+- `components/` - Reusable UI components
+- `hooks/` - Custom React hooks
+- `lib/` - Utility functions and libraries
+- `node_modules/` - Node.js dependencies
+- `public/` - Static files
+- `src/` - Additional source code
+- `styles/` - CSS and styling files
+- `.cursorrules` - Cursor IDE rules
+- `.env` - Environment variables
+- `.env.local` - Local environment variables
+- `.gitignore` - Git ignore configuration
+- `components.json` - Component configuration
+- `directory.md` - This file
+- `localhost-1740632593501.log` - Local server log
+- `next-env.d.ts` - Next.js TypeScript declarations
+- `next.config.mjs` - Next.js configuration
+- `package-lock.json` - npm dependency lock file
+- `package.json` - Project configuration and dependencies
+- `postcss.config.mjs` - PostCSS configuration
+- `README.md` - Project documentation
+- `tailwind.config.ts` - Tailwind CSS configuration
+- `tsconfig.json` - TypeScript configuration
+- `tsconfig.tsbuildinfo` - TypeScript build information
+- `v0-user-next.config.js` - Additional Next.js configuration
+
+## App Directory Structure
+- `app/`
+  - `components/` - App-specific components
+  - `dashboard/` - Dashboard pages
+    - `bridge/` - Bridge functionality
+    - `components/` - Dashboard-specific components
+    - `ecosystem/` - Ecosystem section
+    - `faucet/` - Faucet functionality
+    - `leaderboard/` - Leaderboard section
+    - `news/` - News section
+    - `quests/` - Quests functionality
+    - `stake/` - Staking functionality
+    - `tools/` - Utility tools
+    - `utils/` - Dashboard utilities
+    - `verify/` - Verification functionality
+    - `vesting/` - Vesting functionality
+    - `error.tsx` - Error handling component
+    - `layout.tsx` - Dashboard layout component
+    - `page.tsx` - Main dashboard page
+  - `vesting/` - Vesting pages
+  - `welcome/` - Welcome/onboarding pages
+  - `globals.css` - Global CSS styles
+  - `layout.tsx` - Main app layout
+  - `page.tsx` - Root page component
+  - `types.ts` - TypeScript type definitions
+
+## Components Directory Structure
+- `components/`
+  - `ui/` - UI components
+    - (Multiple UI components like buttons, cards, dialogs, etc.)
+  - `profile-badge.tsx` - User profile badge component
+  - `profile-panel.tsx` - User profile panel component
+  - `rank-badge.tsx` - Rank display badge component
+  - `theme-provider.tsx` - Theme context provider
+  - `usage-circle.tsx` - Usage circle visualization
+  - `wallet-connect-button.tsx` - Wallet connection button
+  - `web3modal-button.tsx` - Web3Modal integration button
+
+## Library Directory Structure
+- `lib/`
+  - `hooks/` - Custom hooks
+    - `use-local-storage.ts` - LocalStorage hook
+    - `use-moralis-data.ts` - Moralis data integration hook
+    - `use-token-prices.ts` - Token pricing hook
+    - `use-wallet-data.ts` - Wallet data management hook
+  - `moralis-client.ts` - Moralis client configuration
+  - `utils.ts` - Utility functions
+  - `wallet-config.ts` - Wallet configuration
+  - `wallet-provider.tsx` - Wallet provider component
+  - `web3auth.tsx` - Web3 authentication
+
+## Technology Stack
+- Next.js (React framework)
+- TypeScript
+- Tailwind CSS
+- Moralis Web3 API integration
+- Web3Modal for wallet connections
+
+
+## Prerequisites & Setup
+
+Before diving in, ensure you have the following ready:
+	•	Moralis Account & API Key: Sign up at Moralis and get your Web3 API key from the admin panel ￼. This key will be used for all Moralis API calls (keep it secret).
+	•	Firebase Project: Create a Firebase project from the Firebase console, and enable Firestore (database) and Authentication (if using Firebase Auth). Get your Firebase config keys (they will be used on the client side).
+	•	Web3Auth Project ID: Sign up at Web3Auth and create a project to obtain a Client ID. This is needed to initialize Web3Auth’s SDK.
+	•	Next.js Project: Use the provided Next.js TypeScript starter with Tailwind configured. Ensure Tailwind and Shadcn UI components are set up (e.g., Tailwind in globals.css and some Shadcn components in the project).
+	•	Dependencies: Install required packages: moralis (Moralis JS SDK), firebase (web SDK for Firestore/auth), @web3auth/modal (Web3Auth SDK for modal auth), and @walletconnect/web3-provider (for WalletConnect v1) or the new WalletConnect SDK. You’ll also need ethers or web3 to interact with the wallet provider (e.g., ethers).
+
+Environment Variables: Create a .env.local file in the project root to store sensitive keys. For example:
+
+# Moralis
+MORALIS_API_KEY=your_moralis_api_key_here
+
+# Web3Auth
+WEB3AUTH_CLIENT_ID=your_web3auth_client_id_here
+
+# (Optional) Infura or RPC for WalletConnect if needed
+NEXT_PUBLIC_INFURA_ID=your_infura_id_here
+
+# Firebase config (these are safe to expose to client)
+NEXT_PUBLIC_FIREBASE_API_KEY=XXXX
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=XXXX.firebaseapp.com
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=XXXX
+# ... other Firebase config (database URL, storage bucket, etc. if provided)
+
+	💡 Note: MORALIS_API_KEY should NOT be exposed to the client. Do not prefix it with NEXT_PUBLIC_. We will use it only in server-side code (Next.js API routes or Firebase Cloud Functions) to secure it. Web3Auth client ID and Firebase config keys can be used in client code (they are not secret). Ensure you never commit the .env.local file to source control.
+
+## 1. Authentication and Wallet Connectivity
+
+We will implement two authentication methods: Web3Auth for social and email-based web3 login, and WalletConnect for users connecting via an external wallet (e.g. scanning a QR code with a mobile wallet). This provides flexibility in how users can authenticate and access their wallet data.
+
+1.1 Web3Auth Integration (Social/Web3 Login)
+
+Web3Auth provides a seamless way for users to authenticate with OAuth providers (Google, Twitter, etc.) or via device biometrics, and get a non-custodial blockchain wallet created for them. It can also act as a unified modal to connect existing wallets like Metamask. We will use the Web3Auth Plug and Play SDK (modal) for easy integration.
+
+### Setup Web3Auth:
+	1.	Install Web3Auth: If not already installed, run npm install @web3auth/modal. Also install any adapters you plan to use (e.g., @web3auth/metamask-adapter, @web3auth/walletconnect-v2-adapter). For basic usage, the modal package includes default adapters.
+	2.	Initialize Web3Auth: Create a context or provider in your app (e.g., Web3AuthProvider.tsx) that initializes the Web3Auth instance on the client. This should run only in browser (use useEffect or lazy initialization).
+
+For example, in a React context using TypeScript:
+
+// context/Web3AuthProvider.tsx
+import { createContext, useContext, useEffect, useState } from 'react';
+import { Web3Auth } from "@web3auth/modal";
+import { CHAIN_NAMESPACES } from "@web3auth/base";
+
+const Web3AuthContext = createContext(null);
+
+export const Web3AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [web3Auth, setWeb3Auth] = useState<Web3Auth | null>(null);
+  const [provider, setProvider] = useState<any>(null); // can be a web3 provider or ethers Signer
+
+  useEffect(() => {
+    // Initialize Web3Auth after component mounts (client-side only)
+    const initWeb3Auth = async () => {
+      try {
+        const web3AuthInstance = new Web3Auth({
+          clientId: process.env.NEXT_PUBLIC_WEB3AUTH_CLIENT_ID!, // use your Web3Auth client ID
+          chainConfig: { chainNamespace: CHAIN_NAMESPACES.EIP155, chainId: "0x1" /* Ethereum mainnet */, rpcTarget: /* optional custom RPC URL */ }
+        });
+        // (Optionally configure adapters for metamask or walletconnect if not included by default)
+        await web3AuthInstance.initModal(); // initialize modal (will prefetch adapters)
+        setWeb3Auth(web3AuthInstance);
+      } catch (e) {
+        console.error("Web3Auth initialization failed", e);
+      }
+    };
+    initWeb3Auth();
+  }, []);
+
+  // Function to trigger login
+  const connectWeb3Auth = async () => {
+    if (!web3Auth) return;
+    try {
+      const provider = await web3Auth.connect();  // opens modal for user to choose login method
+      setProvider(provider);
+      // You can now use the provider with web3/ethers. E.g., get accounts:
+      // const ethersProvider = new ethers.providers.Web3Provider(provider);
+      // const signer = ethersProvider.getSigner();
+      // const address = await signer.getAddress();
+    } catch (e) {
+      console.error("Web3Auth login failed", e);
+    }
+  };
+
+  return (
+    <Web3AuthContext.Provider value={{ web3Auth, provider, connectWeb3Auth }}>
+      {children}
+    </Web3AuthContext.Provider>
+  );
+};
+
+// Hook for ease of use
+export const useWeb3Auth = () => useContext(Web3AuthContext);
+
+In the above code, we configure Web3Auth for an EVM chain (Ethereum mainnet). Web3Auth’s modal will allow users to choose a login method. By default, it supports social logins (Google, etc.) via an OpenLogin adapter, and can also show a “Connect Wallet” option for injected providers (Metamask) or WalletConnect if those adapters are set. We store the returned provider (which conforms to the standard Ethereum provider interface) in state for use elsewhere.
+
+Using Web3Auth in the App:
+	•	Wrap your app (e.g., in _app.tsx or a Layout component) with <Web3AuthProvider>. This ensures the context is available.
+	•	Create a login button component, e.g. LoginButton.tsx, that calls useWeb3Auth().connectWeb3Auth on click. This will open the Web3Auth modal. For instance:
+
+import { useWeb3Auth } from '../context/Web3AuthProvider';
+import { Button } from '@/components/ui/button'; // using a Shadcn UI button component
+
+export const LoginButton: React.FC = () => {
+  const { connectWeb3Auth } = useWeb3Auth();
+  return (
+    <Button onClick={connectWeb3Auth} className="w-full">
+      Login with Web3Auth
+    </Button>
+  );
+};
+
+	•	After a successful login, provider will be set. You can use it to get the user’s wallet address and chain info. For example, using Ethers.js:
+
+import { useEffect, useState } from 'react';
+import { useWeb3Auth } from '../context/Web3AuthProvider';
+import { ethers } from 'ethers';
+
+const UserDashboard: React.FC = () => {
+  const { provider } = useWeb3Auth();
+  const [address, setAddress] = useState<string>('');
+
+  useEffect(() => {
+    if (provider) {
+      const ethersProvider = new ethers.providers.Web3Provider(provider);
+      ethersProvider.getSigner().getAddress().then(setAddress);
+    }
+  }, [provider]);
+
+  return <div>Connected Wallet: {address}</div>;
+};
+
+
+
+This shows the connected address after login. You can now use this address to fetch on-chain data via Moralis.
+
+### 1.2 WalletConnect Integration (External Wallets)
+
+While Web3Auth can cover many cases, you also want to support users connecting their existing wallets directly. WalletConnect is a protocol that lets users connect mobile or desktop wallets through a QR code or deep link. We will integrate WalletConnect to allow users to link wallets like MetaMask Mobile, Trust Wallet, etc., by scanning a QR code.
+
+There are a couple of approaches to integrate WalletConnect in a Next.js app:
+	•	Use Web3Auth’s WalletConnect adapter: If you prefer a unified login modal, Web3Auth’s modal can include WalletConnect as an option. This way, the user clicks your Web3Auth login and can choose WalletConnect. (This requires configuring the @web3auth/walletconnect-v2-adapter and adding it to Web3Auth before initModal().)
+	•	Use WalletConnect Provider directly: This involves using the WalletConnect Web3 Provider package (v1) or the new WalletConnect Sign Client (v2) to manually trigger QR code modal and get a provider.
+
+For clarity, we will illustrate the direct integration using the WalletConnect Web3 Provider (v1) since it’s straightforward:
+	1.	Install: npm install @walletconnect/web3-provider.
+	2.	Create a connect function: Similar to Web3Auth, we can make a context or simply a function that instantiates the WalletConnect provider and connects. For example:
+
+// hooks/useWalletConnect.ts
+import WalletConnectProvider from "@walletconnect/web3-provider";
+import { ethers } from "ethers";
+
+export async function connectWithWalletConnect() {
+  // Create WalletConnect Provider with infura or RPC (required for chain connectivity)
+  const wcProvider = new WalletConnectProvider({
+    infuraId: process.env.NEXT_PUBLIC_INFURA_ID,  // use Infura or a RPC URL for chain
+    qrcode: true, // display QR code modal
+  });
+  // Enable session (triggers QR code modal for the user to scan)
+  await wcProvider.enable();
+  const ethersProvider = new ethers.providers.Web3Provider(wcProvider);
+  const signer = ethersProvider.getSigner();
+  const walletAddress = await signer.getAddress();
+  return { provider: wcProvider, ethersProvider, signer, address: walletAddress };
+}
+
+In the above, when enable() is called, a QR code will pop up (the WalletConnect provider internally uses a QR modal). The user scans it with their wallet app, approves the connection, and then we get an active web3 provider. We wrap it in an Ethers.js provider for convenience. This returns the signer and address as well, which you can store in state.
+	3.	Use in a component: Create a button or UI control for “Connect Wallet” that calls this function:
+
+import { useState } from 'react';
+import { connectWithWalletConnect } from '../hooks/useWalletConnect';
+import { Button } from '@/components/ui/button';
+
+const WalletConnectButton: React.FC = () => {
+  const [wcAddress, setWcAddress] = useState<string>('');
+
+  const handleConnect = async () => {
+    try {
+      const { address } = await connectWithWalletConnect();
+      setWcAddress(address);
+      // You might also store the provider or signer in context/state if needed for further use
+    } catch (err) {
+      console.error("WalletConnect failed", err);
+    }
+  };
+
+  return (
+    <Button onClick={handleConnect} variant="outline">
+      Connect Wallet (WalletConnect)
+    </Button>
+  );
+};
+
+After a successful connection, wcAddress will hold the connected wallet’s address. You can then fetch data for this address via Moralis (similar to Web3Auth case). If using context, you might store the WalletConnect provider globally as well to allow disconnecting or performing transactions.
+	4.	Metamask and other injected wallets: If you want to support desktop wallets like MetaMask without going through WalletConnect (e.g., if user is on a desktop with MetaMask extension), you can detect window.ethereum. For instance, show a “Connect MetaMask” button that calls window.ethereum.request({ method: 'eth_requestAccounts' }) and then use Ethers with window.ethereum. However, because Web3Auth’s modal can handle injected providers too, you may already cover this. It’s up to you whether to implement a separate flow or rely on Web3Auth for consistency.
+
+WalletConnect Usage Note: The WalletConnect provider maintains its own state (it will persist sessions in local storage). Provide a way for users to disconnect (the provider has a disconnect() method). Also, WalletConnect v1 (used above) works but has been succeeded by v2; consider using v2 for new projects (it involves a slightly different setup with a SignClient).
+
+### 1.3 Handling Multiple Auth Methods
+
+It’s good to unify the user’s authentication state after login, regardless of method:
+	•	After a successful Web3Auth login or WalletConnect connection, you will have the user’s wallet address (and a web3 provider).
+	•	You might create a single context/hook (e.g., useAuth) that holds userAddress, and flags for how they logged in. The context could be populated by either Web3Auth or WalletConnect flows.
+	•	Both flows yield an Ethereum provider (Web3Auth’s provider or WalletConnect’s provider). You can use them interchangeably with ethers.js for signing transactions or messages if needed.
+	•	Firebase Auth (optional): If you want to persist sessions in Firebase Auth, you could issue a custom token after verifying the wallet (for example, if using Web3Auth with social login, you already have an OAuth identity you might link with Firebase; or if using just wallets, consider using Moralis Auth or SIWE to verify and then use Firebase custom auth). This is an advanced step – we’ll cover session persistence via Firestore in the Firebase section instead of using Firebase Auth directly.
+
+At this point, the user can authenticate and we have their wallet address. Next, we’ll integrate Moralis to retrieve blockchain data for that address.
+
+## 2. Moralis API Integration
+
+Moralis provides a comprehensive Web3 Data API covering Ethereum (EVM chains), Solana, and more. We will use Moralis to fetch all the on-chain data for the user’s wallet, including balances, tokens, NFTs, transactions, etc. We’ll also set up real-time streams for live updates. We can call Moralis in two ways: using their REST API endpoints (via fetch or Axios) or using the Moralis JS SDK which provides convenient methods.
+
+In this guide, we’ll primarily use the Moralis SDK on our server (Next.js API routes) to keep sensitive API keys hidden and to leverage built-in SDK features. The SDK also handles formatting responses into JSON.
+
+### 2.1 Initializing Moralis SDK in Next.js
+
+Install the SDK with npm install moralis. We will initialize Moralis with our API key in a server-side environment. A good practice is to create a utility module for Moralis initialization so it can be reused by all API routes:
+
+// lib/moralis.ts
+import Moralis from 'moralis';
+
+export async function initMoralis() {
+  if (!Moralis.Core.isStarted) {  // ensure not to re-init on every call
+    await Moralis.start({ apiKey: process.env.MORALIS_API_KEY });
+  }
+}
+
+This initMoralis function checks if the SDK is already started (Moralis SDK has an internal state). If not, it starts it with the API key from env. We will call initMoralis() at the start of each API route handler (or you can call it once during server startup if using a custom server). The Moralis API key is stored safely on server-side (not exposed to client).
+
+### 2.2 Wallet Data Endpoints (Balances, Transactions, Approvals, Transfers)
+
+Moralis offers a Wallet API that returns comprehensive data for a given wallet address. This includes: native crypto balance, ERC-20 token balances, NFT holdings, transaction history (with decoded data), token approvals (i.e., allowances given to spend tokens), token transfers, swaps, and even DeFi positions and overall portfolio value. These endpoints are cross-chain – you specify which blockchain (Ethereum, Polygon, BSC, etc.) you want data from ￼ ￼.
+
+Fetching Native Balance & Token Balances: Use the Moralis SDK’s EVM API. For example, to get the native balance (ETH) and ERC-20 token balances of a wallet:
+
+// pages/api/moralis/balances.ts
+import type { NextApiRequest, NextApiResponse } from 'next';
+import Moralis from 'moralis';
+import { EvmChain } from '@moralisweb3/common-evm-utils';
+import { initMoralis } from '@/lib/moralis';
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  const { address, chain } = req.query;
+  if (!address || typeof address !== 'string') {
+    return res.status(400).json({ error: 'Missing address' });
+  }
+  const chainId = chain && typeof chain === 'string' ? chain : '0x1'; // default Ethereum chain
+  try {
+    await initMoralis();
+    // Get native balance (ETH, BNB, etc depending on chain)
+    const nativeBalance = await Moralis.EvmApi.balance.getNativeBalance({
+      address,
+      chain: chainId as any  // chain as hex string or EvmChain instance
+    });
+    // Get ERC20 token balances
+    const tokenBalances = await Moralis.EvmApi.token.getWalletTokenBalances({
+      address,
+      chain: chainId as any
+    });
+    res.status(200).json({
+      nativeBalance: nativeBalance.toJSON(), 
+      tokenBalances: tokenBalances.toJSON()
+    });
+  } catch (error) {
+    console.error('Moralis balance fetch error:', error);
+    res.status(500).json({ error: 'Failed to fetch balances' });
+  }
+}
+
+In the above endpoint, we use Moralis.EvmApi.balance.getNativeBalance and Moralis.EvmApi.token.getWalletTokenBalances. Moralis will return the balance in WEI and the token list with details (name, symbol, balance, etc). The .toJSON() converts the result to plain object. We also allow a chain query param (as hex chain ID string) to specify network (Ethereum mainnet is 0x1, but you could pass 0x89 for Polygon, etc.). Moralis supports multiple EVM chains with the same unified API ￼.
+
+Transactions and Transfers: To get a wallet’s transaction history, use the getWalletTransactions or getWalletTransactionsVerbose (for decoded input data) from Moralis. There’s also getWalletTokenTransfers and getWalletNFTTransfers for filtering specific transfers:
+
+// pages/api/moralis/transactions.ts
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  const { address, chain } = req.query;
+  await initMoralis();
+  try {
+    const txs = await Moralis.EvmApi.transaction.getWalletTransactions({
+      address: address as string,
+      chain: chain || "0x1",
+      limit: 50
+    });
+    res.status(200).json(txs.toJSON());
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to fetch transactions' });
+  }
+}
+
+Moralis can return the last 100 or so transactions by default, and you can use cursors to paginate through history if needed. The data includes block timestamps, decoded method names, etc., which is great for showing a transaction list in the UI. There’s also a getWalletTransactionsVerbose that includes full internal transactions and log decoding (useful for advanced analytics).
+
+For ERC-20 token transfers (in/out of the wallet), you could use Moralis.EvmApi.token.getWalletTokenTransfers({ address }). Similarly, Moralis.EvmApi.nft.getWalletNFTTransfers({ address }) for NFT transfer history. These can help build a “recent activity” feed specific to tokens or NFTs.
+
+Token Approvals: Token approvals are instances where the user has approved another address (like a DeFi contract) to spend their tokens. Moralis provides getWalletTokenApprovals to list all active ERC20 approvals for a wallet ￼. For example:
+
+const approvals = await Moralis.EvmApi.token.getWalletTokenApprovals({ address });
+
+This returns token contract addresses, spender addresses, and allowed amounts. You could use this to alert users of any risky unlimited approvals.
+
+Example Data: The Wallet API covers most wallet-related needs. According to Moralis docs, it can fetch native balances, historical balances, NFTs with metadata, ERC20 holdings with real-time prices, all transactions (with labeling and decoding), token/NFT transfers, wallet profile (age, ENS domain), and even profit & loss or net worth ￼ ￼. This means with a few API calls you can populate a complete wallet dashboard:
+	•	Display current ETH balance and token balances (with fiat prices for each token if needed, see Token Price API below).
+	•	List recent transactions (incoming/outgoing ETH and token transfers).
+	•	Show NFTs owned by the user.
+	•	List any DeFi positions or assets (covered in section 2.5).
+	•	Show any ENS domain or blockchain domain the wallet has (Moralis has getWalletDomains for ENS, UD, etc.).
+
+We’ll see how to get NFTs and DeFi info next.
+
+Tip: The Moralis calls shown above are made server-side (in API routes). The frontend can use React hooks (e.g., SWR or React Query) to call these API endpoints. For instance, you could have a hook useWalletBalances(address) that uses fetch('/api/moralis/balances?address=0x123&chain=0x1'). This keeps your API key usage secure on the server, and you can cache responses for performance.
+
+### 2.3 NFT Data (Owned NFTs, Metadata, Stats, Top Collections)
+
+Non-fungible token data is easily accessible via Moralis’s NFT API. You can retrieve all NFTs owned by a wallet, fetch metadata for individual NFTs or collections, and even get market data like trades and prices.
+
+Fetching NFTs owned by the wallet: There are two ways to do this with Moralis SDK: through the Wallet API or the NFT API. The Wallet API provides getWalletNFTBalances (or in SDK, Moralis.EvmApi.nft.getWalletNFTs) which returns all NFTs (ERC-721 and ERC-1155) for an address, including metadata like token URI, name, etc ￼ ￼. For example:
+
+// pages/api/moralis/nfts.ts
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  const { address, chain } = req.query;
+  await initMoralis();
+  try {
+    const nfts = await Moralis.EvmApi.nft.getWalletNFTs({
+      address: address as string,
+      chain: chain || "0x1",
+      mediaItems: true  // include media (image) URLs if available
+    });
+    res.status(200).json(nfts.toJSON());
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to fetch NFTs' });
+  }
+}
+
+The mediaItems: true parameter is a nice feature – Moralis can return optimized image URLs for the NFTs (so you can display NFT images directly, avoiding CORS issues with random IPFS gateways). The response will include an array of NFTs with fields like token_address, token_id, name, metadata (often a JSON string of metadata), and even normalized_metadata (Moralis attempts to structure the metadata for you).
+
+NFT Metadata & Collections: If you have an NFT’s contract address and token ID and need detailed metadata (like attributes), you can call getNFTMetadata. However, if you used getWalletNFTs with metadata, you might not need a separate call for each NFT. Moralis automatically attempts to fetch metadata for tokens it knows about. In case some are missing metadata (perhaps a new collection), you can call Moralis.EvmApi.nft.getNFTMetadata({ address: contractAddress, tokenId }) to fetch it specifically ￼. Moralis also allows you to sync a collection if it’s not indexed yet.
+
+For NFT collection-level info, Moralis has endpoints like getNFTContractMetadata (to get collection name, symbol, total supply, etc) ￼, and getNFTOwners (to list all owners of tokens in a collection, useful for checking unique holders) ￼. There’s also getWalletNFTCollections which lists the distinct collections a wallet holds ￼ – you might use this to group the NFTs by collection in your UI.
+
+NFT Statistics and Top NFTs: The prompt mentions NFT stats and top NFTs by trading volume. Moralis doesn’t directly provide a “top collections” ranking out of the box (as of writing), but you can get trading data and derive stats:
+	•	Use getNFTTrades to retrieve recent trades for a given collection on marketplaces (currently supports OpenSea) ￼. From trades, you could compute volume over time or floor prices.
+	•	Use getNFTLowestPrice to get the lowest sale price for NFTs in a collection (on OpenSea) ￼, which is effectively floor price.
+	•	Combining these, you can identify which collections a user owns and what their market values might be, or just display market stats for those collections.
+
+For “top NFTs by trading volume”, you might call getNFTTrades for a set of popular collections or use Moralis’s “Trending” token endpoint (which is for ERC-20 tokens, not NFTs) – Moralis might not directly give “trending NFT collections”, so that might be outside the direct scope. A workaround is to use an API like OpenSea’s or Moralis’s own aggregate data (if available). If needed, one could periodically fetch trades for many collections and rank them (which is beyond this guide’s scope).
+
+However, for an individual user’s portfolio, you can show NFT values by using Moralis’s Price API if it supports NFTs or by correlating with the trades data.
+
+Displaying NFTs in the app: Once you have the NFT data (via the /api/moralis/nfts route), you can create a React component to list the NFTs:
+
+// components/NFTGallery.tsx (simplified)
+import useSWR from 'swr';
+const fetcher = (url: string) => fetch(url).then(res => res.json());
+
+const NFTGallery: React.FC<{ address: string }> = ({ address }) => {
+  const { data, error } = useSWR(address ? `/api/moralis/nfts?address=${address}` : null, fetcher);
+  if (error) return <div>Error loading NFTs</div>;
+  if (!data) return <div>Loading...</div>;
+
+  return (
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      {data.result.map((nft: any) => (
+        <div key={`${nft.token_address}/${nft.token_id}`} className="bg-gray-800 p-4 rounded">
+          <img src={nft.normalized_metadata?.image || nft.metadata?.image} alt={nft.metadata?.name || 'NFT'} className="mb-2 rounded" />
+          <div className="text-sm">{nft.name || nft.metadata?.name}</div>
+          <div className="text-xs text-gray-400">{nft.token_address.slice(0,6)}... Token #{nft.token_id}</div>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+This simple gallery uses SWR to fetch the NFT list and then displays each NFT’s image and name. Tailwind classes are used for styling. Shadcn UI components can be used for cards or skeleton loaders to make it look nicer.
+
+Note: The Moralis NFT API might return a status for each NFT indicating if metadata is SYNCED or still SYNCING. If an NFT’s metadata isn’t available yet (e.g., very new mint), you might need to handle that (display placeholder or allow a manual refresh by calling the sync endpoint).
+
+### 2.4 Token Data (Search, Metadata, Prices, Liquidity, Snipers)
+
+In a web3 wallet, beyond the user’s own balances, you might want to allow searching for token information (e.g., the user searches for a token by name or address), or display token price charts, etc. Moralis’s Token API has endpoints for token metadata, price, and even analytics like “token snipers” and liquidity.
+
+Token Search and Metadata: To implement a token search feature (e.g., user types “USDC” and you fetch the details), use Moralis.EvmApi.token.searchTokens({ query: "USDC", chain: "0x1" }). The searchTokens endpoint finds tokens by name/symbol ￼. Once you have an address, or if the user directly inputs a contract address, use getTokenMetadata to get the token’s name, symbol, decimals, and logo. For example:
+
+const meta = await Moralis.EvmApi.token.getTokenMetadata({
+  addresses: [tokenAddress],
+  chain: "0x1"
+});
+
+(Note: This accepts an array of addresses, so you can fetch metadata for multiple tokens in one call.) The response includes basic info and often a logo URI if available.
+
+Token Price API: Moralis provides a getTokenPrice endpoint which gives the current price of a token in USD (and its native chain currency) ￼. It sources prices from various DEXes and aggregators. For instance:
+
+const price = await Moralis.EvmApi.token.getTokenPrice({
+  address: tokenAddress,
+  chain: "0x1"
+});
+
+The returned object might include usdPrice, nativePrice (with value and decimals), and even a 24h percentage change if available. This is extremely useful to display fiat values for the user’s token balances. In fact, as seen above, Moralis’s Wallet API can directly give real-time prices for tokens when fetching balances ￼, saving you an extra call.
+
+Liquidity and Pairs: For DeFi enthusiasts, you might want to show liquidity pool info. Moralis’s Token API includes endpoints to retrieve DEX pair addresses and liquidity data. For example, getPairAddress (for Uniswap/Sushiswap/etc.) can give you the pair contract for two token addresses ￼, and getPairReserves gives the reserve balances in a pair (thus indicating liquidity). There are also endpoints to get aggregated pair data across multiple DEXes ￼. In practice, if you want to show something like “Liquidity for TOKEN-X”, you could find its main pairing (e.g., TOKEN-X/ETH) and display the reserves or price from it.
+
+Token “Snipers” and Analytics: The Token Snipers API is a special feature to identify addresses that quickly buy and sell a given token (often bots or fast traders). If your wallet app wants to warn users or show interesting stats about a token, you can use this. For example, getSnipersByPairAddress (EVM) or its Solana equivalent will list wallets that have a pattern of sniping trades for that token pair ￼ ￼. Usage:
+
+const snipers = await Moralis.EvmApi.token.getTokenPrice({ pairAddress: uniPairAddress });
+
+(Refer to Moralis docs for exact method name and parameters – it might require the pair’s address which you get from getPairAddress). The response will include wallet addresses and their number of quick trades. You could use this to display something like “Be cautious: X addresses have sniped this token in the last 24h” or show the PnL of top traders if available.
+
+Moralis’s token endpoints also include “Filtered Tokens” and “Trending Tokens” ￼ which can provide lists of tokens based on criteria (market cap, volume, etc.). Trending tokens could be useful if you have a dashboard page showing popular assets. For example, getTrendingTokens might return tokens with significant volume changes.
+
+Integrating Token Data in UI:
+	•	Token Search Bar: You can create a search input where on submit, you call your API route that wraps Moralis’s search. Show a dropdown of results (token name, symbol, maybe logo). When the user selects one, display its info (price, liquidity, etc.).
+	•	Price Display: For each token in the user’s portfolio (from balances), use the price API to show its USD value. Moralis might have already given you price in the balance call (the wallet balances endpoint can include usdPrice for each token if you use getWalletTokenBalances and Moralis has pricing info).
+	•	Token Analytics: Perhaps show a small chart or stats for each token – while Moralis doesn’t directly give historical price charts (they do have an OHLCV candlesticks endpoint in the Token API ￼), you could fetch OHLCV data for a token to plot a price chart. The getTokenPrice in Moralis might also allow specifying a timeframe or exchange to get historical data.
+
+All these token-centric features can enhance your wallet app, though implementing all might be extensive. Choose based on your project’s needs. At minimum, you’ll likely implement token metadata and prices for the user’s balances.
+
+### 2.5 DeFi API (User’s DeFi Positions)
+
+Moralis recently introduced a DeFi API to fetch a user’s positions in various DeFi protocols in one call ￼. This is incredibly useful for showing a user’s full portfolio (beyond just wallet-held tokens). For example, if a user has staked tokens in Aave, provided liquidity on Uniswap, or deposited in MakerDAO, the DeFi API can aggregate those.
+
+Fetching DeFi positions: Use Moralis.EvmApi.defi.getWalletDefiPositions({ address, chain }) (or a similar method; check Moralis’s documentation for the exact naming). This will return an array of positions: each might include the protocol name, the asset deposited, amount, and USD value ￼. For instance, a position could be “Protocol: Aave, Asset: USDC, Type: Supply, Amount: 100 USDC, Value: $100”. Another example is “Uniswap V2 LP TOKEN-X/ETH – user’s share: 1%, value $500”.
+
+Moralis’s DeFi API supports a growing list of protocols (Aave, Uniswap, Compound, PancakeSwap, Curve, etc.) across many chains ￼ ￼. It simplifies what used to require multiple API calls to different subgraphs. You can present these positions in a “DeFi Portfolio” section for the user.
+
+Integrating DeFi Data:
+	•	Add an API route, e.g., /api/moralis/defi-positions that calls getWalletDefiPositions for the user’s address.
+	•	On the frontend, display the returned data in a list or table, grouping by protocol. For example:
+
+Protocol    Asset           Balance         USD Value
+--------    -----           -------         --------
+Aave        USDC (supplied)  100            $100
+Aave        ETH (borrowed)   0.5            $800 (debt)
+Uniswap V2  TOKEN-X/ETH LP   5 LP tokens    $500
+
+You can get very creative here. Moralis may also provide a net worth calculation (getWalletNetWorth in Wallet API) that sums all assets including DeFi and NFTs ￼.
+
+Ensure you handle the case where the user has no DeFi positions (the API might return an empty array or null).
+
+### 2.6 EVM and Solana Support (Multi-chain Considerations)
+
+One of Moralis’s strengths is multi-chain support. Your Next.js wallet can potentially support Ethereum and EVM chains and Solana within the same codebase.
+
+Key points for multi-chain integration:
+	•	Specifying Chain in Requests: As seen, Moralis EVM API calls often accept a chain parameter. You can use Moralis’s EvmChain enum or just chain IDs (hex or decimal) to specify the network. For example, chainId 0x1 for Ethereum, 0x89 for Polygon, 0x38 for BNB Chain, etc. This makes it easy to fetch data from different chains. If your wallet UI allows switching networks, simply pass the selected chain to your API calls. The data format returned is consistent across chains.
+	•	Solana API Differences: Moralis’s Solana API is separate (accessible via Moralis.SolApi). It has similar endpoints but some differences due to Solana’s design. For example, to get SOL balance or SPL token balances for a wallet, you’d use:
+
+const solBalance = await Moralis.SolApi.account.getBalance({ network: 'mainnet', address: solAddress });
+const solTokens = await Moralis.SolApi.account.getTokenBalances({ network: 'mainnet', address: solAddress });
+
+The endpoints are analogous to EVM ones ￼ ￼: getBalance for native SOL, getTokenBalances for SPL tokens, getNFTsByWallet for NFTs on Solana, etc. The network param is usually 'mainnet' or 'devnet' instead of a chain ID.
+
+	•	Handling Data Differences: EVM and Solana data will come in different structures (e.g., Solana tokens have amount in lamports and a decimals field, whereas EVM token balances are in Wei with a separate decimals from metadata). Make sure to convert values to human-readable form (divide by 10^decimals for display). Moralis often gives a formatted string as well.
+	•	Unified Display: If you want to display multi-chain data together, you might tag each item by chain. For example, in a portfolio table, show an extra column for “Chain” or an icon of the chain.
+	•	Native vs Token Terminology: In EVM, “native token” refers to ETH, BNB, etc., and “ERC20” tokens are fungible tokens. In Solana, the native token is SOL, and other tokens are often called SPL tokens. Moralis APIs cover both: you saw getWalletNativeBalance for native and getWalletTokenBalances for ERC20/SPL ￼. Just be mindful to call the correct API group (EvmApi vs SolApi).
+	•	Moralis Start for Solana: We already initialized Moralis with the API key once. That covers both EVM and Solana calls – you do not need a separate key or separate initialization. After Moralis.start({ apiKey }), you can use Moralis.SolApi methods directly ￼.
+
+By supporting multiple chains, your wallet becomes much more powerful. For instance, a user could see their Ethereum and Solana assets in one interface. If implementing this, allow the user to add multiple addresses (one per chain) or detect if a connected wallet is Ethereum vs Solana (Web3Auth can handle Solana if configured for it, or you may integrate a Solana wallet like Phantom separately).
+
+Important: Always clearly label assets by chain to avoid confusion (you wouldn’t want to mix an ETH balance with a SOL balance without distinction). Also consider chain-specific features; e.g., Solana’s “NFTs” are often Metaplex metadata – Moralis abstracts most of this so you can treat them similarly to Ethereum NFTs.
+
+At this stage, we have integrated Moralis for retrieving all necessary on-chain data. Next, we’ll connect this with Firebase to store and manage the data and user sessions, improving performance and providing persistence.
+
+## 3. Firebase Integration (Data Persistence and Sync)
+
+Using Firebase in our web3 wallet provides multiple benefits:
+	•	Firestore can store user portfolio data (so we don’t have to refetch everything on every page load and can show data even when offline).
+	•	Firebase Auth (optional) can manage user sessions or act as an additional layer of authentication if needed (for example, to restrict read/write of data in Firestore to the correct user).
+	•	Cloud Functions or Firebase Extensions can be used to sync blockchain events in real-time to Firestore (using Moralis Streams, as we’ll see).
+	•	We get a scalable, serverless backend to complement our Next.js frontend.
+
+### 3.1 Setting Up Firebase and Firestore
+
+Install Firebase SDK: npm install firebase. We will use Firestore, so we need Firestore from the SDK. In a Next.js app, it’s common to initialize Firebase in a module and reuse it.
+
+Create a file lib/firebaseClient.ts:
+
+// lib/firebaseClient.ts
+import { initializeApp, getApps, FirebaseOptions } from "firebase/app";
+import { getFirestore } from "firebase/firestore";
+import { getAuth } from "firebase/auth";
+
+const firebaseConfig: FirebaseOptions = {
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+  // ... other keys like storageBucket, messagingSenderId, appId if provided
+};
+
+let app;
+if (!getApps().length) {
+  app = initializeApp(firebaseConfig);
+} else {
+  app = getApps()[0];
+}
+
+// Initialize services
+export const db = getFirestore(app);
+export const auth = getAuth(app);
+
+This code ensures we don’t initialize the app more than once (Next.js might hot-reload modules). We export db (Firestore database) and auth (if using Authentication).
+
+Using Firestore to store data:
+
+We will decide on a data model. A straightforward approach is to have a collection for users, and store various sub-collections or fields for their on-chain data. For example:
+
+Firestore
+ └── users (collection)
+      └── <userId> (document)
+            ├── wallets: { evmAddress: "...", solAddress: "..." , ... }
+            ├── profile: { /* any profile info, username, etc */ }
+            ├── balances (subcollection or embedded map)
+            ├── tokens (subcollection of token balances)
+            ├── nfts (subcollection or maybe just store count)
+            ├── transactions (subcollection for tx history)
+            └── defiPositions (subcollection or embedded array)
+
+The exact structure can vary. If one user can have multiple wallet addresses linked, you might have a subcollection for each wallet, or use the wallet address as the doc ID instead (i.e., use the wallet address as the user ID – but if a user can have multiple, you’ll need a separate mapping).
+
+For simplicity, let’s assume one primary wallet per user and use the Firebase Auth UID as the user document ID (if using Firebase Auth). If not using Firebase Auth, you could use the wallet address as the doc ID (but then securing it becomes tricky without Auth – more on that in a moment).
+
+Storing data: You can write to Firestore from both the client and server:
+	•	From Next.js API routes: After fetching data from Moralis, you could store it in Firestore using the Admin SDK or REST. However, since we are already on serverless functions (Next API), it might be easier to send data back to client and let the client decide to store it. But writing from server ensures consistency.
+	•	From the client: You can use the Firestore client SDK (db from above) to set or update documents with the data you got from the API. For example, after calling /api/moralis/balances, you get balances and then do:
+
+import { doc, setDoc } from 'firebase/firestore';
+await setDoc(doc(db, "users", uid), { balances: data }, { merge: true });
+
+(Assuming you have the user’s doc identified by uid.)
+
+Securing data: If you use Firebase Auth, you can write Firestore security rules to ensure that each user can only read/write their own document. Typically:
+
+match /users/{userId} {
+  allow read, write: if request.auth.uid == userId;
+}
+
+This way, even if your client code is public, others cannot steal data that’s not theirs. If not using Auth, you might rely on security via rules in a different way (like using Moralis Streams extension which writes to a protected path – we’ll cover that soon).
+
+Session Management with Firebase Auth (Optional): You might wonder if we should create a Firebase Auth user for our Web3 user. Web3Auth provides social login, but that’s separate from Firebase. One approach is:
+	•	If the user logs in with Google via Web3Auth, you actually could get their Google ID token from Web3Auth and sign them into Firebase with it (Firebase can accept Google OAuth tokens).
+	•	If the user logs in with just a wallet (no OAuth), you could use Moralis Auth (or a custom SIWE implementation) to verify the wallet ownership and then create a Firebase Custom Token to sign in. This is complex but possible. Moralis Auth API could help by generating a JWT after signature which you could accept on backend and then create a Firebase token.
+
+That said, implementing Firebase Auth here might be overkill if all data is public or protected by some other means. Another strategy:
+	•	Use Anonymous auth in Firebase: create an anon user for each session. But that’s not stable across devices unless you store some token.
+	•	Or simply do not use Firebase Auth at all; instead, treat Firestore as a public (or semi-public) data store and rely on rules like “users can only write to their own doc if they know a secret”. However, that secret would essentially be an auth token anyway.
+
+For our guide’s scope, we’ll assume either:
+	•	You enable Firebase Auth and, after Web3Auth login, you link or sign in the user to Firebase (which requires some custom steps), OR
+	•	You decide not to use Firebase Auth and instead all Firestore writes are done through trusted environments (Next.js server or Cloud Functions), and clients only read data that’s allowed.
+
+The simpler path: let’s assume we do not use Firebase Auth for now. We will use Firestore primarily as a cache and for realtime updates (with Streams). We’ll keep security by writing data via backend only.
+
+### 3.2 Caching and Syncing Blockchain Data with Firestore
+
+One key use of Firebase is to cache Moralis API results. This way:
+	•	We minimize direct Moralis API calls (saving rate limits and speeding up UI with cached results).
+	•	We can leverage Firestore’s realtime listeners to update UI when data changes (especially with Moralis Streams feeding data in).
+
+Caching strategy:
+	1.	When a user logs in or opens the app, call the Moralis API (via our Next.js API routes) to get latest data.
+	2.	Store the results in Firestore under the user’s document.
+	3.	On subsequent app loads, read from Firestore first (which might be quicker, and even available offline if using persistence) to show last known data. In the background, still call Moralis for fresh data and update Firestore if differences exist.
+	4.	Use Firestore onSnapshot listeners to automatically reflect any changes (for instance, if a new transaction is added to Firestore by a backend process, it appears in the UI immediately).
+
+For example, after fetching balances in the /api/moralis/balances route, you could write to Firestore:
+
+// (Within the API route after getting balances)
+import admin from 'firebase-admin';
+// ensure Firebase Admin SDK is initialized with service account outside handler
+const uid = req.headers['x-user-id']; // or somehow identify the user
+if (uid) {
+  await admin.firestore().collection('users').doc(uid).set({
+    balances: {
+      nativeBalance: nativeBalance.raw, 
+      tokenBalances: tokenBalances.raw,
+      updatedAt: new Date().toISOString()
+    }
+  }, { merge: true });
+}
+
+This uses the Firebase Admin SDK (you’d need to set it up with service account credentials in your Next.js environment, which might be too much detail for now). Alternatively, skip writing in the API route and do it on client side as mentioned earlier with the client SDK, since the client knows its own UID if using Auth.
+
+Real-time updates with Moralis Streams: Moralis Streams allow you to subscribe to on-chain events (wallet transactions, contract events, etc.) and get a webhook notification when they happen ￼. Moralis even offers a Firebase extension that directly pipes these events into Firestore collections ￼ ￼.
+
+There are two ways to use Streams here:
+	•	Use the official Firebase Extension: This is a no-code solution where you install the Moralis Streams Firebase extension. It sets up a Cloud Function in your project that listens for Moralis webhook calls, and writes events to Firestore under /moralis/{collectionType}/{streamId}/{docId}. For a wallet stream, collectionType might be “address” and collectionName the wallet address (or stream ID). This extension also comes with predefined Firestore security rules to prevent user tampering ￼ ￼. You’d configure streams in Moralis (via their admin UI or SDK) to watch the addresses you care about.
+	•	Implement custom webhook: You can set your own webhook URL (for example a Next.js API route /api/moralis/webhook) that Moralis calls on events. In that handler, you verify the signature (Moralis signs the payload) and then manually write to Firestore or send a push notification, etc. The Firebase extension essentially does the same but is pre-packaged.
+
+Using the Firebase Streams Extension (briefly): Install it with Firebase CLI: firebase ext:install moralis/moralis-streams. You’ll need to provide your Moralis API key and some config. Once set up, it creates a Cloud Function ext-moralis-streams-webhook (as seen in the extension docs). Then in Moralis dashboard, you set up a stream:
+	•	For example, create a stream for the user’s wallet address (you can have a stream that listens to all ERC20 transfers to/from that address, and all native transactions).
+	•	Point the stream’s webhook to the URL given by the extension (something like https://us-central1-YOURPROJECT.cloudfunctions.net/ext-moralis-streams-webhook).
+	•	When a transaction occurs, Moralis will call this function, which will write a new document in Firestore under moralis/address/${walletAddress}/${txId} with details of the tx.
+
+Back in the frontend, you can listen to this Firestore path. However, since these docs are in a separate collection, you might prefer to copy them into your users/{uid}/transactions subcollection for simplicity. You could do that via another Cloud Function that triggers on write (the extension documentation suggests using an onWrite trigger for custom handling ￼).
+
+If not using the extension, the custom implementation would be:
+	•	Create an API route /api/streams/webhook that handles POST requests. Verify the signature (Moralis sends headers x-signature that you can use with your API secret to verify the payload).
+	•	Parse the events from req.body (Moralis sends an array of updates).
+	•	For each update, decide where to write in Firestore. E.g., if it’s a wallet transaction, add to users/uid/transactions with tx details.
+	•	Secure this route (only Moralis should call it). The signature verification ensures that.
+
+Managing Firestore updates and UI: With streams pushing new data, your app could simply use Firestore listeners:
+
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
+...
+useEffect(() => {
+  const q = query(collection(db, 'users', uid, 'transactions')); 
+  const unsubscribe = onSnapshot(q, (snapshot) => {
+    // update local state with new transactions
+    const txs = snapshot.docs.map(doc => doc.data());
+    setTransactions(txs);
+  });
+  return unsubscribe;
+}, [uid]);
+
+This way, whenever a new transaction document is added (by the stream webhook), the UI updates immediately showing the incoming/outgoing transfer without needing a refresh.
+
+Storing other data: You can also use Firestore to store user-specific settings (like which tokens are hidden (common in wallets to hide dust tokens), or user profile info such as username if you allow that). Moreover, Firestore can cache things like token metadata and NFT metadata. For instance, you might have a tokens collection that stores metadata for token contracts so you don’t call Moralis for the same token info repeatedly. This is more like an application-level cache.
+
+### 3.3 Putting It Together: Auth, Firestore, and Moralis
+
+Let’s walk through a typical user flow now with all pieces integrated:
+	1.	User opens the app. We initialize Firebase (client) and perhaps check if a Firebase user is logged in (if using Auth).
+	2.	User clicks “Connect Wallet” (via Web3Auth or WalletConnect). After authentication, we get their wallet address.
+	3.	(If using Firebase Auth: at this point, create or sign in a Firebase user. If not, skip.)
+	4.	Our app now knows userId (either Firebase UID or we use the wallet address as an ID).
+	5.	We fetch cached data from Firestore: e.g., get the users/<id>/balances doc and .../transactions collection. Show that data immediately (it might be from a previous session).
+	6.	In parallel, call our Next.js API routes to get fresh data from Moralis. Show a loading indicator for anything that’s not available in cache.
+	7.	When the API responses come back, update Firestore with the new data and update UI.
+	8.	Meanwhile, if Moralis Streams are set up, any new on-chain events trigger Firestore updates, which the UI receives in realtime (e.g., user receives a token – a new transfer appears within seconds).
+	9.	The user can now explore the wallet dashboard: check balances, view NFTs, etc., all backed by Moralis data but served through Firestore for performance.
+	10.	On logout (if you provide a logout), you might clear any sensitive local state. If Firebase Auth was used, sign out of Firebase (auth.signOut()).
+
+Firebase Cloud Functions for server logic: We used Next.js API routes for server-side logic. You could alternatively implement some or all of this in Firebase Cloud Functions. For example, a Cloud Function that runs every X minutes to refresh all users’ data via Moralis, or functions triggered by authentication (create user doc on new sign up), etc. Next.js API and Firebase Functions are both serverless; use what you’re comfortable with. Using Next.js API is fine for user-initiated requests (when user is online and using the app). For background or scheduled tasks, Firebase Functions might be more appropriate.
+
+Cost considerations: Both Moralis and Firebase have usage limits. Caching with Firestore reduces Moralis API calls (which might have a monthly quota). Moralis Streams can further reduce the need for polling. Firestore itself can handle a lot of reads, but remember that listening to a highly updated collection could cost many read operations. Use proper rules and batched writes when possible. Also, secure your Moralis API key (in functions or server only) to prevent abuse.
+
+Now that we have covered the integration of Firebase, let’s move to some best practices and project structure to ensure our app is production-ready and well-organized.
+
+## 4. Optimization and Production Readiness
+
+Building a robust web3 application requires attention to performance, security, and maintainability. Here are some key considerations:
+	•	Efficient API Usage: Avoid unnecessary calls to Moralis by leveraging caching and conditional fetch. Use SWR or React Query on the frontend to cache results in memory and revalidate in the background. On the server, consider caching frequently requested data in memory (if using Next.js server with a persistent instance) or using Firestore/Redis as a cache store. Moralis’s API is fast, but it has rate limits and each call might count against quotas – batch requests when possible. For example, Moralis allows fetching multiple token metadata in one request ￼, and multiple balances in one call (for historical queries).
+	•	Parallelize and Lazy-load: Don’t block the app by waiting for all data at once. Fetch balances, NFTs, and transactions in parallel (the user might look at balances first, NFTs later, etc.). You can also lazy-load certain sections when the user navigates to them. Next.js API routes run in parallel by default when called from the client, so you can issue multiple fetches without awaiting one after the other. Just be mindful not to overwhelm the API – a small number of parallel calls is fine.
+	•	Use IndexedDB or Persisted Cache: In addition to Firestore, you can use browser storage to cache data. For example, Moralis SDK might utilize local storage for some caching. Libraries like SWR can persist cache between sessions. This can make the app feel instant.
+	•	Secure API Keys and Sensitive Info: As emphasized, never expose your Moralis API key. Keep it server-side. Also protect your Firebase service account if you use one (for admin SDK in Next.js). Use environment variables for all secrets and configure your deployment (Vercel or Firebase Hosting) to include those. In client-side code, only use keys meant to be public (Firebase API key is okay, Web3Auth clientId is okay). For additional safety, restrict your Moralis API key in the Moralis admin (they might allow binding it to certain domains or setting resource limits).
+	•	Error Handling: Anticipate failures. Moralis API might occasionally fail or timeout – handle this by catching errors in API routes and returning a friendly error message. The frontend should check for error in the response and display a notification like “Unable to load data. Please try again.” Use a UI component (maybe a Shadcn Toast or Alert dialog) for errors. Also handle empty states (e.g., no NFTs owned, no transactions yet – show a placeholder message).
+	•	Debugging and Logging: In development, log responses from Moralis to understand the shape of data. This helps in mapping it to your Firestore schema or UI components. For production, remove or limit sensitive logs. If using Vercel/Next.js, you can use their logging or monitoring. Firebase Functions provide logs in their console as well. Consider adding monitoring/alerting if this is a serious app (e.g., track if Moralis call failures spike, or if Firestore writes fail).
+	•	Optimize Frontend Performance: Tailwind and Shadcn UI help with fast UI rendering. Ensure you purge unused CSS (Tailwind does this in production build). Use Next.js dynamic imports if a page has heavy components (e.g., a big chart library for token prices – load it only when needed). Also, images from NFT metadata could be large – consider using Next.js Image component with optimization if possible, or ensure the images (often from IPFS) are resized. Moralis provides optimized images (often via their CDN) which is helpful.
+	•	Production Build & SEO: If this wallet app requires SEO (likely not if it’s an app behind login), you might not need SSR for pages. Using CSR (client-side render) is fine for a dashboard. If SEO is needed, you could SSR some publicly available data (like trending tokens, etc.), but user-specific data should remain client-side for security.
+	•	API Rate Limits: Moralis has rate limits (depending on your plan). If your user base grows, consider implementing a rate-limit per user to avoid abuse. E.g., if exposing an endpoint that fetches data, ensure one user cannot spam it repeatedly (you could use Next.js Middleware or simple in-memory counters to throttle rapid calls). Moralis also suggests per-IP rate limiting as a strategy ￼.
+	•	Testing: Test the integration with a variety of accounts – an account with lots of tokens, one with many NFTs, one with DeFi use, etc., to ensure your UI handles all cases (like hundreds of tokens – maybe implement pagination or lazy load if the list is huge).
+	•	Scalability: Our architecture (Next.js API + Firebase) is serverless and scales pretty well automatically. But keep an eye on Firestore reads/writes. If you store a large number of documents (e.g., every transaction), listing them might cost a lot of reads. You can mitigate by querying only a subset (last 20 txns) or implementing user-controlled filters (like a “load more” button to paginate).
+	•	Sensitive Data in Firestore: Only store what you need. Avoid storing private keys or anything sensitive (we aren’t doing that here; keys remain on Web3Auth or user’s device). Mostly we store public blockchain data, which is fine. Still, consider privacy – a user might not want their data exposed. With proper security rules, only they can read it, but if not using Auth, essentially the data is public. So, using Auth is recommended if this is a multi-user app, so that one user can’t read another’s Firestore docs. If you opted not to use Auth, realize that anyone could potentially read the Firestore data if they know the document path. You might use obscure IDs or secure through backend as a proxy.
+
+By following these practices, your app will be more reliable and secure in production. Next, let’s outline the project structure to organize all this code and summarize how each part fits into the provided Next.js setup.
+
+## 5. Project Structure and Implementation Details
+
+Organizing your code is important for maintainability. We will follow a structure that separates concerns (components, hooks, API routes, etc.) and matches typical Next.js conventions. Below is a suggested structure (assuming a Next.js 13 project with the app directory disabled in favor of pages, since we use pages/api for simplicity):
+
+project-root/
+├── pages/
+│   ├── index.tsx              # Home page (maybe a landing or dashboard if logged in)
+│   ├── dashboard.tsx          # Protected page showing the wallet dashboard
+│   └── api/
+│       ├── moralis/
+│       │    ├── balances.ts   # API route for balances
+│       │    ├── nfts.ts       # API route for NFTs
+│       │    ├── transactions.ts
+│       │    ├── defi.ts       # API for DeFi positions
+│       │    └── [...]         # etc for other endpoints as needed
+│       └── streams-webhook.ts # (optional) Moralis Streams webhook endpoint
+├── components/
+│   ├── LoginButton.tsx        # Triggers Web3Auth login
+│   ├── WalletConnectButton.tsx# Triggers WalletConnect
+│   ├── NFTGallery.tsx
+│   ├── TokensTable.tsx        # Displays token balances and values
+│   ├── TransactionsList.tsx   # Displays recent transactions
+│   ├── DefiPositionsTable.tsx # Displays DeFi portfolio
+│   └── ui/                    # Shadcn UI components
+│       ├── button.tsx         # Shadcn Button component (pre-built styles)
+│       ├── dialog.tsx         # Shadcn Dialog (if used for modals)
+│       ├── [...other components].tsx 
+├── hooks/
+│   ├── useAuth.ts             # Custom hook combining Web3Auth/WalletConnect state
+│   ├── useBalances.ts         # e.g., uses SWR to fetch /api/moralis/balances
+│   ├── useNFTs.ts             # fetch /api/moralis/nfts
+│   └── useFirestoreSync.ts    # maybe a hook to setup Firestore listeners for streams
+├── context/
+│   └── Web3AuthProvider.tsx   # Context provider as discussed
+├── lib/
+│   ├── moralis.ts             # Moralis init function
+│   ├── firebaseClient.ts      # Firebase initialization (client side)
+│   └── firebaseAdmin.ts       # (optional) Firebase admin initialization for server
+├── styles/
+│   ├── globals.css            # Tailwind base styles imported here
+│   └── [...other styles].css 
+├── public/                  # public assets (maybe images or icons, e.g., crypto icons)
+├── tailwind.config.js
+├── next.config.js
+└── package.json
+
+Explanation:
+	•	pages/api/moralis/* contains our serverless functions that act as proxies to Moralis. Each file corresponds to a category of data (balances, NFTs, etc.). They all import initMoralis from lib/moralis.ts and use Moralis SDK calls. We separate them for clarity, but you could also combine some (e.g., one endpoint that returns all data at once, though that might be heavy).
+	•	components/ui holds Shadcn UI components. Shadcn is essentially a collection of pre-styled components using Radix UI under the hood. For example, button.tsx might export a Button component already styled with Tailwind. We will use these for a consistent design (as seen in our usage of <Button> in code snippets). The Shadcn setup should already be done in the provided project (running npx shadcn-ui@latest init would have created this folder and some config).
+	•	hooks holds React hooks to encapsulate logic like data fetching or syncing. For instance, useBalances could internally use useSWR to call the /api/moralis/balances for the current user’s address. This keeps pages/components cleaner. Similarly, useAuth could abstract whether the user used Web3Auth or WalletConnect and provide a unified login, logout, and current address.
+	•	We might have a useFirestoreSync hook that, when given an address or userID, sets up Firestore listeners (for streams updates). This would use the db from firebaseClient.ts.
+	•	context/Web3AuthProvider.tsx as we wrote, provides Web3Auth state globally. You might also have a similar provider for any global app state or theme.
+	•	lib/firebaseAdmin.ts would initialize the Firebase Admin SDK if we plan to use it in API routes (for writing to Firestore securely with admin privileges). To do this, you need to include your service account JSON (or better, the values from it) in env vars. This is advanced and optional. If not using Admin SDK, you can perform Firestore writes on the client or use Firebase callable functions.
+	•	Pages: We likely have a dashboard.tsx page that is behind a login. If using Next.js middlewares or simply conditional rendering, ensure the user is authenticated (maybe redirect to / if not). On that page, you’d render TokensTable, NFTGallery, etc., pulling data via hooks. If using NextAuth or some auth solution, you’d integrate that here, but since we use Web3Auth which doesn’t use NextAuth, you can manage auth state in the client and conditionally show the dashboard or a login prompt.
+	•	Tailwind is configured via tailwind.config.js to include Shadcn’s styles (which usually are in ./components/ui/*). Make sure to include these paths in the purge content config.
+	•	The provided structure likely already has Tailwind set up and Shadcn installed.
+
+Working with Tailwind & Shadcn UI: Use utility classes to layout your components. For example, we used className="grid grid-cols-2 md:grid-cols-4 gap-4" for an NFT grid. Shadcn UI components accept className and also come with variants. For instance, Shadcn’s Button has variants like variant="outline" as we used for WalletConnectButton. This gives you pre-defined styles (primary, secondary, outline, etc.). Refer to the Shadcn documentation for available components (they likely included Alert, Card, Table, etc., which you can utilize for a polished UI).
+
+State Management: We relied on React context for Web3Auth. You might also use context or recoil for global state like the current address or user data. However, since we store/fetch most data via hooks and Firestore, we can keep global state minimal. The combination of context + Firestore + SWR covers most reactivity needs. For example:
+	•	The address is in context.
+	•	We pass the address to hooks like useBalances(address).
+	•	useBalances uses SWR which caches and shares state across components using the same key (so if two components need balances, they get the same data without double fetching).
+	•	Firestore listeners trigger updates which can be fed into SWR cache or separate state.
+
+Next.js API Routes vs Firebase Functions: We showed Next.js API routes for calling Moralis. Ensure these routes are protected from public use if needed (for instance, you could require an API key or session token to call them, otherwise someone could potentially abuse your API through your endpoints). If using Firebase Auth, one idea is to include the Firebase ID token in the request (the client can call await auth.currentUser.getIdToken() and send that in headers). Then in the API route, verify it using Firebase Admin. This way you confirm the requester is authenticated. This might be overkill for smaller apps, but it’s a good security add-on especially if you worry about someone scraping your data or using your API key via your endpoints.
+
+Testing the Setup: After implementing, test end-to-end:
+	•	Start the dev server, connect a wallet via Web3Auth or WalletConnect. Open browser console to see any errors.
+	•	Check that data appears and also verify in Firebase console that the user document is created/updated.
+	•	Simulate an on-chain event (for streams): e.g., send a small amount of token/NFT to your wallet from another account, and see if it reflects. You might need to wait a few seconds and ensure streams are configured. If not using streams, such updates will only show on manual refresh / re-fetch.
+	•	Try on different devices (Web3Auth should work on mobile web too; WalletConnect obviously is for mobile->desktop scenario).
+	•	Ensure UI looks good with Tailwind classes (Shadcn provides sensible defaults but you might need to adjust spacing or responsiveness).
+
+## 6. Step-by-Step Summary for Implementation
+
+To wrap up, here’s a step-by-step summary to implement the integration:
+	1.	Set Up Next.js and Tailwind: Create the Next.js project (if not already done) and configure Tailwind CSS. Install Shadcn UI and add a few base components (Button, etc.) for use in the UI.
+	2.	Configure Firebase: Initialize a Firebase project. In Next.js, set up the client SDK (firebaseClient.ts) with Firestore. Also (optional) set up Firebase Auth if you choose to use it.
+	3.	Integrate Web3Auth: Install @web3auth/modal. Implement Web3AuthProvider context and a login button. Test that you can log in (e.g., using Google or create a Web3Auth fake account) and get a wallet address.
+	4.	Integrate WalletConnect: Install @walletconnect/web3-provider. Create a connect function or component. Test connecting with a mobile wallet (you’ll need to open the app on desktop and scan the QR).
+	5.	Moralis SDK Init: Install moralis. Create lib/moralis.ts and call Moralis.start() with API key. Maybe test a quick call in an API route to ensure the key works (e.g., call a simple endpoint and console.log result).
+	6.	Build API Routes for Data: Implement pages/api/moralis/*.ts routes for each type of data:
+	•	balances.ts for native & token balances.
+	•	transactions.ts for transaction history.
+	•	nfts.ts for NFT holdings.
+	•	defi.ts for DeFi positions.
+	•	(Any others needed, e.g., tokens/[address].ts for token metadata if building a token search page).
+
+Each should call initMoralis() then the appropriate Moralis SDK method, and return JSON.
+	7.	Connect Frontend to API: Create hooks like useBalances that take the user’s address and call the API route (using SWR or fetch in useEffect). Do similarly for NFTs, transactions, etc. These hooks will be used in your components.
+	8.	Design UI Components: Using Tailwind/Shadcn, create components to display each data type. For example, TokensTable lists token balances (token name, balance, USD value). TransactionsList shows a list of transactions (maybe format the timestamp and values nicely). NFTGallery we already sketched out.
+	9.	Tie it together in Dashboard page: In pages/dashboard.tsx, use the useWeb3Auth context to get the connected address (or if not connected, redirect to home or show login). Then use all your hooks: const { data: balances } = useBalances(address); etc., and pass that data to the respective components. The page would section out a Tokens panel, NFTs panel, activity panel, etc. Tailwind’s grid or flex utilities can help layout a responsive dashboard.
+	10.	Implement Firebase Sync: After confirming that fetching directly from Moralis via API works, incorporate Firestore:
+	•	When data is fetched, write it to Firestore. You can do this in the API route (server-side with admin) or in the hook after receiving data (client-side). Simpler might be client-side for now: in useBalances, after getting response, call setDoc(doc(db, "users", uid), { balances: responseData }, { merge: true }).
+	•	Set up onSnapshot listeners if you want real-time updates. Or use Firestore as the primary source with a fallback to fetch if data is stale. There are many ways; ensure consistency in how you do it for each dataset.
+	•	If using Moralis Streams, configure and test that. This might be done after everything else is working, as an enhancement.
+	11.	Secure and Optimize: Before deploying, double-check that no sensitive info is in client code. Implement security rules in Firestore (especially if using Auth). Also consider build optimizations like turning off console logs and ensuring the bundle isn’t too large (maybe code-split heavy logic like Web3Auth which is loaded on login page only).
+	12.	Testing: Try different scenarios: new user (no Firestore data yet), returning user (Firestore cache exists), network switching (if implemented), disconnect and reconnect, etc. Ensure nothing breaks. Also test the UI on various screen sizes (Tailwind makes it easy to adjust classes for mobile).
+
+
+    ## Swagger API's
+   Moralis EVM Swagger API:  https://deep-index.moralis.io/api-docs-2.2/
+
+   Moralis Solana Swagger API: https://solana-gateway.moralis.io/api/#/

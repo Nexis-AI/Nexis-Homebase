@@ -5,23 +5,7 @@ import { useState, Suspense } from "react"
 import Link from "next/link"
 import Image from "next/image"
 import { usePathname } from "next/navigation"
-import {
-  Home,
-  Moon,
-  Sun,
-  Search,
-  ChevronDown,
-  BracketsIcon as Bridge,
-  Coins,
-  Scroll,
-  Trophy,
-  PenToolIcon as Tool,
-  BarChart2,
-  Newspaper,
-  Shield,
-  Boxes,
-  Wallet,
-} from "lucide-react"
+import * as LucideIcons from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { ProfileBadge } from "@/components/profile-badge"
@@ -32,17 +16,18 @@ import Spline from "@splinetool/react-spline"
 
 // Update the sidebarItems array to include the new pages
 const sidebarItems = [
-  { icon: Home, label: "Home", href: "/dashboard" },
-  { icon: Bridge, label: "Bridge", href: "/dashboard/bridge" },
-  { icon: Coins, label: "Stake", href: "/dashboard/stake" },
-  { icon: Scroll, label: "Vesting", href: "/dashboard/vesting" },
-  { icon: Trophy, label: "Quests", href: "/dashboard/quests" },
-  { icon: Tool, label: "Tools", href: "/dashboard/tools" },
-  { icon: BarChart2, label: "Leaderboard", href: "/dashboard/leaderboard" },
-  { icon: Newspaper, label: "News", href: "/dashboard/news" },
-  { icon: Shield, label: "Verify", href: "/dashboard/verify" },
-  { icon: Boxes, label: "Ecosystem", href: "/dashboard/ecosystem" },
-  { icon: Wallet, label: "Faucet", href: "/dashboard/faucet" },
+  { icon: LucideIcons.Home, label: "Home", href: "/dashboard" },
+  { icon: LucideIcons.Brackets, label: "Bridge", href: "/dashboard/bridge" },
+  { icon: LucideIcons.Coins, label: "Stake", href: "/dashboard/stake" },
+  { icon: LucideIcons.Scroll, label: "Vesting", href: "/dashboard/vesting" },
+  { icon: LucideIcons.Trophy, label: "Quests", href: "/dashboard/quests" },
+  { icon: LucideIcons.PenTool, label: "Tools", href: "/dashboard/tools" },
+  { icon: LucideIcons.BarChart2, label: "Leaderboard", href: "/dashboard/leaderboard" },
+  { icon: LucideIcons.Newspaper, label: "News", href: "/dashboard/news" },
+  { icon: LucideIcons.Shield, label: "Verify", href: "/dashboard/verify" },
+  { icon: LucideIcons.Boxes, label: "Ecosystem", href: "/dashboard/ecosystem" },
+  { icon: LucideIcons.Wallet, label: "Faucet", href: "/dashboard/faucet" },
+  { icon: LucideIcons.Gauge, label: "Connection Metrics", href: "/dashboard/connection-metrics" },
 ]
 
 // Create a separate SplineComponent to handle the loading state
@@ -138,13 +123,13 @@ export default function DashboardLayout({
           <header className="h-16 border-b border-border flex items-center justify-between px-4 bg-background/90 backdrop-blur-sm sticky top-0 z-30">
             <div className="flex-1" />
             <div className="hidden sm:flex items-center gap-2 bg-secondary rounded-lg px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors border border-white/5">
-              <Search className="h-4 w-4" />
+              <LucideIcons.Search className="h-4 w-4" />
               <span>Open Command Menu</span>
               <kbd className="hidden sm:inline-block text-xs bg-muted px-1.5 rounded">⌘K</kbd>
             </div>
             <div className="flex-1 flex justify-end items-center gap-2 sm:gap-4">
               <Button variant="ghost" size="icon" onClick={() => setIsDarkMode(!isDarkMode)} className="rounded-lg">
-                {isDarkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+                {isDarkMode ? <LucideIcons.Sun className="h-5 w-5" /> : <LucideIcons.Moon className="h-5 w-5" />}
               </Button>
               {/* Position ProfileBadge relative to the layout container */}
               <div className="relative h-8">

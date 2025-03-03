@@ -23,7 +23,12 @@ export function TokenChart({ data, id, symbol, currentPrice, high24h, low24h }: 
   const [timeRange, setTimeRange] = useState("1D")
   
   // Format currency values
-  const formatCurrency = (value: number) => {
+  const formatCurrency = (value: number | undefined) => {
+    // Add a null check to handle undefined values
+    if (value === undefined || value === null) {
+      return "$0.00";
+    }
+    
     if (value >= 1000000) {
       return `$${(value / 1000000).toFixed(2)}M`;
     }

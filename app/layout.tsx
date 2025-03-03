@@ -6,7 +6,11 @@ import { WalletProvider } from "@/lib/wallet-provider"
 import { Toaster } from "sonner"
 import "./globals.css"
 
-const inter = Inter({ subsets: ["latin"] })
+const inter = Inter({ 
+  subsets: ["latin"],
+  display: 'swap', // Improve font loading performance
+  preload: true
+})
 
 export const metadata: Metadata = {
   title: "Nexis Dashboard",
@@ -20,6 +24,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        {/* Remove wallet icon preload as it's not immediately needed */}
+      </head>
       <body className={inter.className}>
         <ThemeProvider
           attribute="class"

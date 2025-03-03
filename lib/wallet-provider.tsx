@@ -4,7 +4,7 @@ import { createWeb3Modal } from '@web3modal/wagmi/react';
 import { WagmiConfig } from 'wagmi';
 import { wagmiConfig, projectId, featuredWalletIds } from './wallet-config';
 import { useEffect, useState, useRef } from 'react';
-import type { ReactNode } from 'react';
+import type { ReactNode, PropsWithChildren } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 // Create a client for React Query with optimized settings
@@ -41,6 +41,16 @@ const initializeWeb3Modal = () => {
     });
     web3ModalInitialized = true;
     console.log("Web3Modal initialized successfully");
+    
+    // Log wallet detection status after initialization
+    if (typeof window !== 'undefined') {
+      console.log('Wallet detection status after Web3Modal init:', {
+        injectedProvider: typeof window.ethereum !== 'undefined',
+        isMetaMask: window._isMetaMask,
+        hasExtension: window._hasWalletExtension,
+        detectedWallets: window._walletProviders?.map(w => w.name) || []
+      });
+    }
   } catch (error) {
     console.error("Failed to initialize Web3Modal:", error);
   }
@@ -61,28 +71,44 @@ if (typeof window !== 'undefined') {
   });
 }
 
-export function WalletProvider({ children }: { children: ReactNode }) {
+export function WalletProvider({ children }: PropsWithChildren) {
   const [mounted, setMounted] = useState(false);
-  const [initError, setInitError] = useState<Error | null>(null);
-  const initAttempted = useRef(false);
+  const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
-    if (!initAttempted.current) {
-      initAttempted.current = true;
-      
-      try {
-        // Initialize Web3Modal if not already done
-        if (!web3ModalInitialized) {
-          initializeWeb3Modal();
-        }
-        
-        // Mark as mounted
-        setMounted(true);
-      } catch (error) {
-        console.error("Error mounting WalletProvider:", error);
-        setInitError(error instanceof Error ? error : new Error('Unknown wallet initialization error'));
-      }
+    try {
+      initializeWeb3Modal();
+    } catch (err) {
+      console.error("Error initializing Web3Modal in component:", err);
+      setError(err instanceof Error ? err : new Error(String(err)));
     }
+    
+    // Log initial wallet state
+    if (typeof window !== 'undefined') {
+      const hasEthereum = typeof window.ethereum !== 'undefined';
+      console.log('Initial wallet state:', {
+        hasEthereum,
+        providers: hasEthereum && window.ethereum ? Object.keys(window.ethereum) : [],
+        ethereum: hasEthereum
+      });
+    }
+
+    setMounted(true);
+    
+    // Check for MetaMask installation
+    const checkMetaMask = () => {
+      if (typeof window !== 'undefined') {
+        const hasMetaMask = window._isMetaMask;
+        console.log('MetaMask detection:', hasMetaMask ? 'Installed' : 'Not detected');
+      }
+    };
+    
+    // Check after a delay to allow injection
+    setTimeout(checkMetaMask, 1000);
+    
+    return () => {
+      // No cleanup needed
+    };
   }, []);
 
   // Don't render anything until the component has mounted
@@ -91,11 +117,11 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   }
 
   // Show error message if initialization failed
-  if (initError) {
+  if (error) {
     return (
       <div className="p-4 bg-red-50 text-red-700 rounded-md">
         <h3 className="font-semibold">Wallet connection error</h3>
-        <p>There was an error connecting to Web3Modal: {initError.message}</p>
+        <p>There was an error connecting to Web3Modal: {error.message}</p>
         <p>Please try refreshing the page or contact support if the issue persists.</p>
       </div>
     );

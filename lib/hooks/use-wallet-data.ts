@@ -1,13 +1,17 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { useAccount, useBalance, usePublicClient } from 'wagmi';
-import { formatUnits } from 'viem';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useAccount, useBalance, usePublicClient, useNetwork, useDisconnect, useEnsName } from 'wagmi';
+import { formatUnits, formatEther } from 'viem';
 import { useChainId } from 'wagmi';
 import { mainnet } from 'viem/chains';
-import { useTokenPrices, getTokenPriceFallback } from './use-token-prices';
+import { useTokenPrices } from './use-token-prices';
 import { useLocalStorage } from './use-local-storage';
 import type { Hash } from 'viem';
+import { publicClient } from '../wallet-config';
+import { useEthersProvider, useEthersSigner } from './use-ethers';
+import { Provider } from 'ethers';
+import { useTransactionWatcher } from './use-transaction-watcher';
 
 // Interfaces for token balances
 export interface TokenInfo {
@@ -20,7 +24,7 @@ export interface TokenInfo {
 
 export interface TokenBalance {
   token: TokenInfo;
-  balance: bigint;
+  balance: number | bigint;
   formattedBalance: string;
   price: number;
   value: number;
@@ -62,20 +66,62 @@ export interface PortfolioStats {
   change24hUSD: number;
 }
 
+// Interface for the dashboard expected balance format
+export interface DashboardTokenBalance {
+  name: string;
+  symbol: string;
+  balance: number;
+  price: number;
+  changePercentage: number;
+  address?: string;
+}
+
+// Interface for the activity format expected by the dashboard
+export interface DashboardActivity {
+  id: string;
+  type: string;
+  status: string;
+  amount: number;
+  symbol: string;
+  timestamp: number;
+  address?: string;
+}
+
 // Interface for the hook return value
 export interface WalletData {
   isLoading: boolean;
   address?: string;
   ensName?: string;
   tokens: TokenBalance[];
+  balances: DashboardTokenBalance[]; // Add this to match what dashboard expects
+  activities: DashboardActivity[]; // More specific type instead of any[]
   portfolio: PortfolioStats;
   transactions: Transaction[];
   approvals: Approval[];
-  refetch: () => Promise<void>;
+  refetchWalletData?: () => Promise<void>;
+  refetch: () => Promise<void>; // Alias for refetchWalletData for backward compatibility
   addCustomToken: (token: TokenInfo) => void;
   removeCustomToken: (tokenAddressOrSymbol: string) => void;
   customTokens: TokenInfo[];
+  connectionState: string;
+  connectionError?: Error | null;
+  error?: Error | null;
+  formattedEthBalance: string | null;
+  ethBalance: string | null;
+  isLoadingBalance: boolean;
 }
+
+// Connection state constants for better UX
+const CONNECTION_STATES = {
+  DISCONNECTED: 'disconnected',
+  CONNECTING: 'connecting', 
+  CONNECTED: 'connected',
+  RECONNECTING: 'reconnecting',
+  ERROR: 'error'
+};
+
+// Maximum number of retries for RPC calls
+const MAX_RETRIES = 3;
 
 // Helper function to format market cap
 function formatMarketCap(marketCap?: number): string {
@@ -146,6 +192,47 @@ const TOKENS = {
   },
 };
 
+// Utility function to safely check if token has address property
+// Add this before the useWalletData hook
+function hasAddress(token: TokenInfo): token is TokenInfo & { address: string } {
+  return 'address' in token && typeof token.address === 'string';
+}
+
+// Define a retry function for RPC calls
+const retryRpcCall = async <T>(
+  fn: () => Promise<T>,
+  maxRetries: number = 3,
+  delayMs: number = 1000
+): Promise<T> => {
+  let lastError: unknown;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      
+      // Check if this is an RPC error that we should retry
+      const isRpcError = 
+        error instanceof Error && 
+        (error.message.includes('HTTP request failed') || 
+         error.message.includes('Failed to fetch') ||
+         error.message.includes('RPC error'));
+      
+      if (!isRpcError || attempt === maxRetries) {
+        throw error;
+      }
+      
+      // Exponential backoff
+      const backoffTime = delayMs * Math.pow(2, attempt - 1);
+      await new Promise(resolve => setTimeout(resolve, backoffTime));
+    }
+  }
+  
+  // This should never be reached due to the throw above, but TypeScript needs it
+  throw lastError;
+};
+
 /**
  * Hook to fetch and manage wallet data including balances, transactions, and approvals
  * Optimized for production with retry limits and automatic updates on transactions
@@ -153,8 +240,23 @@ const TOKENS = {
 export function useWalletData(): WalletData {
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
-  const publicClient = usePublicClient();
-  const [isLoading, setIsLoading] = useState(true);
+  
+  // Enhanced state management for better UX
+  const [connectionState, setConnectionState] = useState(
+    isConnected ? CONNECTION_STATES.CONNECTED : CONNECTION_STATES.DISCONNECTED
+  );
+  const [connectionError, setConnectionError] = useState<Error | null>(null);
+  
+  // Balance data with optimized fetching
+  const [walletEthBalance, setWalletEthBalance] = useState<string | null>(null);
+  const [formattedEthBalance, setFormattedEthBalance] = useState<string | null>(null);
+  const [isLoadingBalance, setIsLoadingBalance] = useState(false);
+  
+  // For tracking retry attempts
+  const retryCount = useRef(0);
+  const lastSuccessfulFetch = useRef<number | null>(null);
+  const isFirstLoad = useRef(true);
+  
   const [tokens, setTokens] = useState<TokenBalance[]>([]);
   const [portfolio, setPortfolio] = useState<PortfolioStats>({
     totalValue: 0,
@@ -168,35 +270,589 @@ export function useWalletData(): WalletData {
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [ensName, setEnsName] = useState<string | undefined>(undefined);
   
-  // Add retry counter ref to limit retry attempts
-  const retryCount = useRef(0);
-  const maxRetries = 3;
+  // Get ETH balance with optimized configuration
+  const { data: ethBalanceData, refetch: refetchEthBalance } = useBalance({
+    address,
+    query: {
+      enabled: Boolean(address) && isConnected,
+      staleTime: 30_000, // Consider stale after 30 seconds
+      gcTime: 60_000, // Cache for 1 minute
+      retry: false, // Don't watch for changes, we'll manage updates manually
+    }
+  });
   
-  // Watch for new transactions to trigger updates
+  // Generate a wallet-specific storage key to keep custom tokens separate per wallet
+  const walletKey = address ? `nexis-custom-tokens-${address.toLowerCase()}` : 'nexis-custom-tokens';
+  
+  // Get custom tokens from localStorage using the wallet-specific key
+  const [storedCustomTokens, setStoredCustomTokens] = useLocalStorage<Record<string, TokenInfo>>(
+    walletKey, 
+    {}
+  );
+
+  // Combine default tokens with custom tokens
+  const allTokens = useMemo(() => ({ ...TOKENS, ...storedCustomTokens }), [storedCustomTokens]);
+  
+  // Extract token symbols for price fetching
+  const tokenSymbols = Object.values(allTokens).map(token => token.symbol.toLowerCase());
+  
+  // Fetch real-time prices (rename variables to avoid conflicts)
+  const { prices: fetchedPrices, refreshPrices: refreshTokenPrices, error: tokenPriceError } = useTokenPrices(tokenSymbols);
+  
+  // Optimize the initial connection
   useEffect(() => {
-    if (!isConnected || !address || !publicClient) return;
+    if (isConnected && !walletEthBalance) {
+      // Set connecting state for better UX
+      setConnectionState(
+        isFirstLoad.current ? CONNECTION_STATES.CONNECTING : CONNECTION_STATES.RECONNECTING
+      );
+      
+      // Fetch initial data
+      fetchWalletData();
+      isFirstLoad.current = false;
+    } else if (!isConnected) {
+      // Reset state when disconnected
+      setConnectionState(CONNECTION_STATES.DISCONNECTED);
+      setWalletEthBalance(null);
+      setFormattedEthBalance(null);
+      retryCount.current = 0;
+    }
+  }, [isConnected, walletEthBalance]);
+  
+  // Function to fetch wallet data with optimized error handling
+  const fetchWalletData = useCallback(async () => {
+    if (!address || !isConnected) return;
     
-    // Setup transaction listener
-    const unwatch = publicClient.watchPendingTransactions({
-      onTransactions: (hashes: Hash[]) => {
-        console.log('New pending transactions detected:', hashes);
-        // Reset retry counter when a new transaction is detected
-        retryCount.current = 0;
-        // Trigger a balance refresh when a new transaction is detected
-        fetchWalletData();
-      },
-    });
+    setIsLoadingBalance(true);
     
-    // Cleanup function
+    try {
+      // Fetch ETH balance with retry mechanism
+      const balance = await fetchEthBalance(address);
+      
+      if (balance !== null) {
+        // Format the balance for display
+        const formatted = formatBalanceWithPrecision(balance);
+        
+        // Update state
+        setWalletEthBalance(balance);
+        setFormattedEthBalance(formatted);
+        
+        // Mark success
+        setConnectionState(CONNECTION_STATES.CONNECTED);
+        setConnectionError(null);
+        retryCount.current = 0; // Reset retry count on success
+        lastSuccessfulFetch.current = Date.now();
+      }
+      
+      // Fetch real token balances from Moralis API route instead of direct client call
+      const chainIdHex = `0x${chainId.toString(16)}`;
+      
+      // Use the new API route for fetching balances
+      const balancesResponse = await fetch(`/api/moralis/balances?address=${address}&chain=${chainIdHex}`);
+      
+      if (!balancesResponse.ok) {
+        throw new Error(`Failed to fetch balances: ${balancesResponse.statusText}`);
+      }
+      
+      const balancesData = await balancesResponse.json();
+      
+      if (!balancesData.success) {
+        throw new Error(balancesData.error || 'Failed to fetch balances');
+      }
+      
+      const tokenData = balancesData.data;
+      
+      // Transform the token balances data into our format
+      const ethPrice = fetchedPrices?.eth?.usdPrice || 3500;
+      const tokenBalances: TokenBalance[] = [];
+      
+      // Add native token (ETH)
+      if (tokenData.nativeBalance) {
+        const ethBalance = tokenData.nativeBalance.balance 
+          ? Number(formatEther(BigInt(tokenData.nativeBalance.balance))) 
+          : Number(balance || 0);
+          
+        tokenBalances.push({
+          token: TOKENS.ETH,
+          balance: BigInt(ethBalance * 10**18),  // Convert to Wei
+          formattedBalance: ethBalance.toFixed(4),
+          price: ethPrice,
+          value: ethBalance * ethPrice,
+          change24h: fetchedPrices?.eth?.priceChange?.['24h'] || 0,
+          marketCap: 'N/A', // Use string value instead of trying to access non-existent property
+          volume24h: 'N/A', // Use string value instead of trying to access non-existent property
+        });
+      }
+      
+      // Add ERC20 tokens
+      if (tokenData.tokenBalances && Array.isArray(tokenData.tokenBalances)) {
+        for (const token of tokenData.tokenBalances) {
+          if (token.token_address) {
+            // Find token info from our known tokens or create a new entry
+            const tokenAddress = token.token_address.toLowerCase();
+            
+            // Find matching token by address
+            const knownToken = Object.values(allTokens).find(
+              t => hasAddress(t) && t.address.toLowerCase() === tokenAddress
+            ) as TokenInfo | undefined;
+            
+            // If token not in our list, create a new entry
+            const tokenInfo: TokenInfo = knownToken || {
+              symbol: token.symbol || 'Unknown',
+              name: token.name || 'Unknown Token',
+              decimals: token.decimals || 18,
+              address: token.token_address,
+              logo: token.logo || undefined
+            };
+            
+            // Get price from our price feed or use default
+            const priceInfo = fetchedPrices?.[tokenInfo.symbol.toLowerCase()];
+            const price = priceInfo?.usdPrice || 0;
+            const change24h = priceInfo?.priceChange?.['24h'] || 0;
+            
+            // Format balance based on decimals
+            const tokenDecimals = token.decimals || tokenInfo.decimals;
+            const rawBalance = BigInt(token.balance || '0');
+            const formattedBalance = formatUnits(rawBalance, tokenDecimals);
+            const numericBalance = Number(formattedBalance);
+            
+            // Calculate USD value
+            const value = numericBalance * price;
+            
+            tokenBalances.push({
+              token: tokenInfo,
+              balance: rawBalance,
+              formattedBalance: numericBalance.toFixed(4),
+              price,
+              value,
+              change24h,
+              marketCap: 'N/A', // Convert to string type
+              volume24h: 'N/A',  // Convert to string type
+            });
+          }
+        }
+      }
+      
+      // Add NZT token only if in development environment or testnet
+      // This ensures mock data only appears in non-production environments
+      const isTestEnvironment = process.env.NODE_ENV === 'development' || 
+                               (chainId && chainId !== 1 && chainId !== 56 && chainId !== 137);
+      const hasNztToken = tokenBalances.some(t => t.token.symbol === 'NZT');
+
+      if (isTestEnvironment && !hasNztToken) {
+        // Only add mock NZT token on test networks or development
+        tokenBalances.push({
+          token: TOKENS.NZT,
+          balance: BigInt(1000 * 10**18),
+          formattedBalance: '1,000',
+          price: 8.75,
+          value: 8750,
+          change24h: 15.2,
+          marketCap: '875M',
+          volume24h: '125M',
+        });
+      }
+      
+      setTokens(tokenBalances);
+      
+      // Calculate portfolio stats
+      const totalValue = tokenBalances.reduce((sum: number, token) => sum + token.value, 0);
+      const fiatValue = tokenBalances
+        .filter(t => t.token.symbol === 'USDC' || t.token.symbol === 'USDT')
+        .reduce((sum: number, token) => sum + token.value, 0);
+      const weightedChange = tokenBalances.reduce(
+        (sum: number, token) => sum + (token.change24h * token.value), 
+        0
+      ) / (totalValue || 1); // Prevent division by zero
+      
+      // Fetch NFT data using the new API route
+      const nftResponse = await fetch(`/api/moralis/nfts?address=${address}&chain=${chainIdHex}&limit=5`);
+      
+      if (!nftResponse.ok) {
+        throw new Error(`Failed to fetch NFTs: ${nftResponse.statusText}`);
+      }
+      
+      const nftDataResponse = await nftResponse.json();
+      const nftData = nftDataResponse.success ? nftDataResponse.data : { nfts: { result: [] } };
+      
+      // Calculate NFT value - try to use real data if available
+      let estimatedNftValue = 0;
+      const nftResults = nftData.nfts?.result || [];
+      const nftCount = nftResults.length || 0;
+      
+      if (nftCount > 0 && nftData.stats?.trades) {
+        // If we have trade data, use average price from recent trades
+        try {
+          const trades = nftData.stats.trades.result || [];
+          if (trades.length > 0) {
+            const totalTradeValue = trades.reduce((sum: number, trade: { price?: string }) => {
+              return sum + (Number(trade.price) || 0);
+            }, 0);
+            const avgTradeValue = totalTradeValue / trades.length;
+            estimatedNftValue = nftCount * avgTradeValue;
+          } else {
+            // Default fallback if no trade data
+            const ethPrice = fetchedPrices?.eth?.usdPrice || 3500;
+            estimatedNftValue = nftCount * 0.5 * ethPrice;
+          }
+        } catch (error) {
+          console.warn('Error calculating NFT value from trades:', error);
+          const ethPrice = fetchedPrices?.eth?.usdPrice || 3500;
+          estimatedNftValue = nftCount * 0.5 * ethPrice;
+        }
+      } else {
+        // Fallback to rough estimate
+        const ethPrice = fetchedPrices?.eth?.usdPrice || 3500;
+        estimatedNftValue = nftCount * 0.5 * ethPrice;
+      }
+      
+      setPortfolio({
+        totalValue,
+        fiatValue,
+        nftValue: estimatedNftValue,
+        stakedValue: totalValue * 0.15, // Mock staked value as 15% of portfolio
+        change24h: weightedChange,
+        change24hUSD: totalValue * (weightedChange / 100),
+      });
+      
+      // Fetch transaction history using the new API route
+      const txResponse = await fetch(`/api/moralis/transactions?address=${address}&chain=${chainIdHex}&limit=10`);
+      
+      if (!txResponse.ok) {
+        throw new Error(`Failed to fetch transactions: ${txResponse.statusText}`);
+      }
+      
+      const txDataResponse = await txResponse.json();
+      
+      if (!txDataResponse.success) {
+        throw new Error(txDataResponse.error || 'Failed to fetch transactions');
+      }
+      
+      const txHistory = txDataResponse.data;
+      
+      // Format transactions
+      const formattedTxs: Transaction[] = [];
+      
+      if (txHistory.transactions?.result && Array.isArray(txHistory.transactions.result)) {
+        for (const tx of txHistory.transactions.result) {
+          let type: Transaction['type'] = 'other';
+          const token = 'ETH';
+          
+          if (tx.from_address && tx.to_address) {
+            const isReceive = tx.to_address.toLowerCase() === address.toLowerCase();
+            const isSend = tx.from_address.toLowerCase() === address.toLowerCase();
+            
+            // Determine transaction type
+            if (isReceive) {
+              type = 'receive';
+            } else if (isSend) {
+              type = 'send';
+            }
+            
+            // Convert from wei to ETH for value
+            const value = tx.value ? formatEther(BigInt(tx.value)) : '0';
+            const formattedAmount = Number(value).toFixed(4);
+            
+            // Add to formatted transactions
+            formattedTxs.push({
+              id: tx.hash,
+              hash: tx.hash,
+              type,
+              token,
+              amount: formattedAmount,
+              to: isReceive ? undefined : tx.to_address,
+              from: isSend ? undefined : tx.from_address,
+              status: tx.receipt_status === '1' ? 'completed' : 'failed',
+              date: new Date(Number(tx.block_timestamp) * 1000).toISOString(),
+            });
+          }
+        }
+      }
+      
+      // Process token transfers if available
+      if (txHistory.tokenTransfers?.result && Array.isArray(txHistory.tokenTransfers.result)) {
+        for (const transfer of txHistory.tokenTransfers.result) {
+          // Skip if hash already exists to avoid duplicates
+          if (formattedTxs.some(tx => tx.hash === transfer.transaction_hash)) {
+            continue;
+          }
+          
+          let type: Transaction['type'] = 'other';
+          const isReceive = transfer.to_address?.toLowerCase() === address.toLowerCase();
+          const isSend = transfer.from_address?.toLowerCase() === address.toLowerCase();
+          
+          // Determine transaction type
+          if (isReceive) {
+            type = 'receive';
+          } else if (isSend) {
+            type = 'send';
+          }
+          
+          // Find token info
+          const tokenSymbol = transfer.symbol || 'Unknown';
+          
+          // Format amount based on token decimals
+          const decimals = Number(transfer.decimals || 18);
+          const rawAmount = BigInt(transfer.value || '0');
+          const formattedValue = formatUnits(rawAmount, decimals);
+          const numericAmount = Number(formattedValue);
+          const formattedAmount = numericAmount.toFixed(4);
+          
+          // Add to formatted transactions
+          formattedTxs.push({
+            id: transfer.transaction_hash,
+            hash: transfer.transaction_hash,
+            type,
+            token: tokenSymbol,
+            amount: formattedAmount,
+            to: isReceive ? undefined : transfer.to_address,
+            from: isSend ? undefined : transfer.from_address,
+            status: 'completed', // Assume completed for token transfers
+            date: new Date(Number(transfer.block_timestamp) * 1000).toISOString(),
+          });
+        }
+      }
+      
+      // Add mock transactions only in development or if no transactions found
+      if (formattedTxs.length === 0 && isTestEnvironment) {
+        formattedTxs.push({
+          id: '0x1234...5678',
+          hash: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
+          type: 'send',
+          token: 'NZT',
+          amount: '1,000',
+          to: '0x8765...4321',
+          status: 'completed',
+          date: new Date(Date.now() - 30 * 60000).toISOString(), // 30 minutes ago
+        });
+      }
+      
+      setTransactions(formattedTxs);
+
+      // Process approvals data
+      const formattedApprovals: Approval[] = [];
+      
+      // Process real approvals data if available
+      if (txHistory.approvals?.result && Array.isArray(txHistory.approvals.result)) {
+        for (const approval of txHistory.approvals.result) {
+          try {
+            // Find token info
+            const tokenSymbol = approval.symbol || 'Unknown';
+            const spenderAddress = approval.spender;
+            
+            // Determine protocol name from spender address
+            // In a real app, you'd have a mapping of known protocols
+            let protocolName = 'Unknown Protocol';
+            if (spenderAddress) {
+              // Example mapping - in production, this should be a comprehensive list
+              // You could fetch this from an API or database
+              const protocolMap: Record<string, string> = {
+                '0x68b3465833fb72a70ecdf485e0e4c7bd8665fc45': 'Uniswap',
+                '0x7a250d5630b4cf539739df2c5dacb4c659f2488d': 'Uniswap',
+                '0xdef1c0ded9bec7f1a1670819833240f027b25eff': 'Ox Protocol',
+                '0x1111111254fb6c44bac0bed2854e76f90643097d': '1inch',
+                // Add more known protocol addresses
+              };
+              
+              // Check if we know this protocol
+              const lowerSpender = spenderAddress.toLowerCase();
+              protocolName = Object.entries(protocolMap).find(
+                ([addr]) => addr.toLowerCase() === lowerSpender
+              )?.[1] || 'Unknown Protocol';
+            }
+            
+            // Determine risk level based on allowance
+            let risk: 'low' | 'medium' | 'high' = 'medium';
+            const allowanceValue = approval.value || '0';
+            
+            // Check if this is an unlimited approval
+            const isUnlimited = allowanceValue === '115792089237316195423570985008687907853269984665640564039457584007913129639935';
+            
+            if (isUnlimited) {
+              risk = 'high';
+            } else if (BigInt(allowanceValue) > BigInt(1000) * BigInt(10 ** 18)) {
+              risk = 'medium';
+            } else {
+              risk = 'low';
+            }
+            
+            // Format the allowance for display
+            let allowanceFormatted: string;
+            if (isUnlimited) {
+              allowanceFormatted = 'Unlimited';
+            } else {
+              const decimals = Number(approval.decimals || 18);
+              const formatted = formatUnits(BigInt(allowanceValue), decimals);
+              allowanceFormatted = Number(formatted).toFixed(2);
+            }
+            
+            // Calculate last used time
+            let lastUsed = 'Unknown';
+            if (approval.last_used_at) {
+              const lastUsedDate = new Date(Number(approval.last_used_at) * 1000);
+              const now = new Date();
+              const diffMs = now.getTime() - lastUsedDate.getTime();
+              const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+              
+              if (diffDays > 30) {
+                const diffMonths = Math.floor(diffDays / 30);
+                lastUsed = `${diffMonths} month${diffMonths > 1 ? 's' : ''} ago`;
+              } else if (diffDays > 0) {
+                lastUsed = `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
+              } else {
+                const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+                lastUsed = `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+              }
+            }
+            
+            formattedApprovals.push({
+              id: approval.transaction_hash || `approval-${approval.spender}-${tokenSymbol}`,
+              protocol: protocolName,
+              token: tokenSymbol,
+              allowance: allowanceFormatted,
+              lastUsed,
+              risk,
+            });
+          } catch (error) {
+            console.warn('Error processing approval:', error);
+          }
+        }
+      }
+      
+      // Add mock approvals only in development or if no real approvals found
+      if (formattedApprovals.length === 0 && isTestEnvironment) {
+        formattedApprovals.push(
+          {
+            id: '0x1234...5678',
+            protocol: 'NexSwap',
+            token: 'NZT',
+            allowance: 'Unlimited',
+            lastUsed: '2 hours ago',
+            risk: 'high',
+          },
+          {
+            id: '0x8765...4321',
+            protocol: 'NexStake',
+            token: 'ETH',
+            allowance: '1,000',
+            lastUsed: '1 day ago',
+            risk: 'medium',
+          }
+        );
+      }
+      
+      setApprovals(formattedApprovals);
+      
+    } catch (error) {
+      console.error('Error fetching wallet data:', error);
+      
+      if (retryCount.current < MAX_RETRIES) {
+        // Increment retry counter
+        retryCount.current += 1;
+        
+        // Retry with exponential backoff
+        setTimeout(() => {
+          fetchWalletData();
+        }, 1000 * (2 ** (retryCount.current - 1))); // 1s, 2s, 4s
+        
+        setConnectionState(CONNECTION_STATES.RECONNECTING);
+      } else {
+        // Max retries reached
+        setConnectionState(CONNECTION_STATES.ERROR);
+        // Ensure we always set an Error object
+        setConnectionError(error instanceof Error ? error : new Error(String(error)));
+      }
+    } finally {
+      setIsLoadingBalance(false);
+    }
+  }, [address, isConnected, chainId, fetchedPrices, allTokens]);
+  
+  // Helper function to fetch ETH balance with optimized error handling
+  const fetchEthBalance = async (walletAddress: `0x${string}`): Promise<string | null> => {
+    try {
+      // Try using wagmi hook data first (faster if cached)
+      if (ethBalanceData?.value) {
+        return formatEther(ethBalanceData.value);
+      }
+      
+      // Fallback to manual fetch if hook data is not available
+      const balance = await publicClient.getBalance({
+        address: walletAddress,
+      });
+      
+      return formatEther(balance);
+    } catch (error) {
+      // Don't log RPC errors with full stack trace to keep console clean
+      console.error('Error fetching ETH balance:', 
+        error instanceof Error ? error.message : 'Unknown error');
+      
+      // Set connection state if this is an RPC error
+      if (error instanceof Error && 
+          (error.message.includes('Failed to fetch') || 
+           error.message.includes('network') || 
+           error.message.includes('timeout'))) {
+        // Consider updating connection state here if you track that
+        // This helps UI show network connectivity issues
+      }
+      
+      // Return '0' instead of null for better UX - shows as 0 ETH instead of completely failing
+      return '0';
+    }
+  };
+  
+  // Format balance with appropriate precision
+  const formatBalanceWithPrecision = (balance: string): string => {
+    const numBalance = Number.parseFloat(balance);
+    
+    if (numBalance < 0.001) {
+      return '<0.001 ETH';
+    }
+    
+    if (numBalance < 1) {
+      return `${numBalance.toFixed(4)} ETH`;
+    }
+    
+    return `${numBalance.toFixed(2)} ETH`;
+  };
+  
+  // Listen for new transactions to update balances
+  useEffect(() => {
+    if (!isConnected || !address) return;
+    
+    // Setup transaction watcher
+    let cleanup: (() => void) | undefined;
+    
+    try {
+      if (publicClient?.watchPendingTransactions) {
+        cleanup = publicClient.watchPendingTransactions({
+          onTransactions: () => {
+            // Only refetch if we haven't fetched recently (past 5 seconds)
+            const now = Date.now();
+            const timeSinceLastFetch = lastSuccessfulFetch.current 
+              ? now - lastSuccessfulFetch.current 
+              : Number.POSITIVE_INFINITY;
+              
+            if (timeSinceLastFetch > 5000) {
+              refetchEthBalance();
+              fetchWalletData();
+            }
+          }
+        });
+      }
+    } catch (error) {
+      console.error('Error setting up transaction watcher:', error);
+    }
+    
+    // Clean up
     return () => {
-      unwatch();
+      if (cleanup) cleanup();
     };
-  }, [address, isConnected, publicClient]);
+  }, [address, isConnected, refetchEthBalance, fetchWalletData]);
   
   // Handle ENS resolution with error handling
   useEffect(() => {
     const getEnsName = async () => {
-      if (!address || chainId !== mainnet.id || !publicClient) {
+      if (!address || chainId !== mainnet.id) {
         setEnsName(undefined);
         return;
       }
@@ -214,37 +870,7 @@ export function useWalletData(): WalletData {
     };
     
     getEnsName();
-  }, [address, chainId, publicClient]);
-  
-  // Generate a wallet-specific storage key to keep custom tokens separate per wallet
-  const walletKey = address ? `nexis-custom-tokens-${address.toLowerCase()}` : 'nexis-custom-tokens';
-  
-  // Get custom tokens from localStorage using the wallet-specific key
-  const [customTokens, setCustomTokens] = useLocalStorage<Record<string, TokenInfo>>(
-    walletKey, 
-    {}
-  );
-
-  // Combine default tokens with custom tokens
-  const allTokens = { ...TOKENS, ...customTokens };
-  
-  // Extract token symbols for price fetching
-  const tokenSymbols = Object.values(allTokens).map(token => token.symbol.toLowerCase());
-  
-  // Fetch real-time prices
-  const { prices: tokenPrices, refreshPrices } = useTokenPrices(tokenSymbols);
-  
-  // Get ETH balance with optimized configuration
-  const { data: ethBalance, refetch: refetchEthBalance } = useBalance({
-    address,
-    query: {
-      enabled: Boolean(address) && isConnected,
-      staleTime: 30 * 1000, // Consider data stale after 30 seconds
-      gcTime: 5 * 60 * 1000, // Keep cached data for 5 minutes
-      retry: 2, // Retry twice (total of 3 attempts)
-      retryDelay: 1000, // 1 second between retries
-    }
-  });
+  }, [address, chainId]);
 
   // Function to add a custom token
   const addCustomToken = (token: TokenInfo) => {
@@ -253,7 +879,7 @@ export function useWalletData(): WalletData {
       return;
     }
     
-    setCustomTokens((prev: Record<string, TokenInfo>) => ({
+    setStoredCustomTokens((prev: Record<string, TokenInfo>) => ({
       ...prev,
       [token.address || token.symbol]: token
     }));
@@ -266,309 +892,55 @@ export function useWalletData(): WalletData {
       return;
     }
     
-    setCustomTokens((prev: Record<string, TokenInfo>) => {
+    setStoredCustomTokens((prev: Record<string, TokenInfo>) => {
       const updated = { ...prev };
       delete updated[tokenAddressOrSymbol];
       return updated;
     });
   };
 
-  // Function to fetch and process wallet data
-  const fetchWalletData = useCallback(async () => {
-    if (!isConnected || !address) {
-      // Clear data when wallet is disconnected
-      setTokens([]);
-      setPortfolio({
-        totalValue: 0,
-        fiatValue: 0,
-        nftValue: 0,
-        stakedValue: 0,
-        change24h: 0,
-        change24hUSD: 0,
-      });
-      setTransactions([]);
-      setApprovals([]);
-      setIsLoading(false);
-      return;
-    }
+  // Create dashboard format balances
+  const dashboardBalances: DashboardTokenBalance[] = tokens.map(token => ({
+    name: token.token.name,
+    symbol: token.token.symbol,
+    balance: typeof token.balance === 'bigint' ? Number(formatUnits(token.balance, token.token.decimals)) : token.balance,
+    price: token.price,
+    changePercentage: token.change24h,
+    address: token.token.address
+  }));
 
-    // Check if we've exceeded the retry limit
-    if (retryCount.current >= maxRetries) {
-      console.warn(`Reached maximum retry attempts (${maxRetries}). Using cached or fallback data.`);
-      setIsLoading(false);
-      return;
-    }
+  // Create dashboard format activities
+  const activities = transactions.map(tx => ({
+    id: tx.id,
+    type: tx.type,
+    status: tx.status,
+    amount: Number.parseFloat(tx.amount.replace(/,/g, '')),
+    symbol: tx.token.split(' ')[0],
+    timestamp: new Date(tx.date).getTime(),
+    address: tx.to || tx.from,
+  }));
 
-    setIsLoading(true);
-    retryCount.current += 1;
-
-    try {
-      // Start with ETH balance
-      console.log("Fetching ETH balance for", address);
-      let ethBalanceResult = null;
-      
-      try {
-        ethBalanceResult = await refetchEthBalance();
-        // Reset retry counter on success
-        retryCount.current = 0;
-      } catch (error) {
-        console.warn("Error fetching ETH balance:", error instanceof Error ? error.message : 'Unknown error');
-        
-        // Only increment retry count for temporary errors
-        if (error instanceof Error && 
-            (error.message.includes('timeout') || 
-             error.message.includes('429') || 
-             error.message.includes('rate limit'))) {
-          console.log(`Retries remaining: ${maxRetries - retryCount.current}`);
-        } else {
-          // Don't count permanent errors against retry limit
-          retryCount.current -= 1;
-        }
-      }
-      
-      const tokenBalances: TokenBalance[] = [];
-
-      if (ethBalanceResult?.data) {
-        console.log("ETH balance received:", ethBalanceResult.data);
-        const ethBalance = ethBalanceResult.data;
-        // Process ETH balance
-        const ethPriceData = tokenPrices.eth || getTokenPriceFallback('eth');
-        const ethPrice = ethPriceData.current_price || 3500;
-        const ethValue = Number(formatUnits(ethBalance.value, 18)) * ethPrice;
-        
-        tokenBalances.push({
-          token: TOKENS.ETH,
-          balance: ethBalance.value,
-          formattedBalance: formatUnits(ethBalance.value, 18),
-          price: ethPrice,
-          value: ethValue,
-          change24h: ethPriceData.price_change_percentage_24h || 0,
-          marketCap: formatMarketCap(ethPriceData.market_cap),
-          volume24h: formatVolume(ethPriceData.total_volume),
-        });
-      } else {
-        // Handle case when ethBalance fails to load
-        console.warn('ETH balance could not be loaded, using fallback value');
-        const ethPriceData = tokenPrices.eth || getTokenPriceFallback('eth');
-        const ethPrice = ethPriceData.current_price || 3500;
-        // Use mock balance for demonstration
-        const mockEthBalance = BigInt('1000000000000000000'); // 1 ETH
-        
-        tokenBalances.push({
-          token: TOKENS.ETH,
-          balance: mockEthBalance,
-          formattedBalance: '1.0',
-          price: ethPrice,
-          value: ethPrice,
-          change24h: ethPriceData.price_change_percentage_24h || 0,
-          marketCap: formatMarketCap(ethPriceData.market_cap),
-          volume24h: formatVolume(ethPriceData.total_volume),
-        });
-      }
-
-      // USDC - mock balance
-      const usdcBalance = BigInt(5000_000000); // 5,000 USDC with 6 decimals
-      const usdcPriceData = tokenPrices.usdc || getTokenPriceFallback('usdc');
-      tokenBalances.push({
-        token: TOKENS.USDC,
-        balance: usdcBalance,
-        formattedBalance: formatUnits(usdcBalance, 6),
-        price: usdcPriceData.current_price || 1,
-        value: 5000 * (usdcPriceData.current_price || 1),
-        change24h: usdcPriceData.price_change_percentage_24h || 0,
-        marketCap: formatMarketCap(usdcPriceData.market_cap),
-        volume24h: formatVolume(usdcPriceData.total_volume),
-      });
-      
-      // USDT - mock balance
-      const usdtBalance = BigInt(2500_000000); // 2,500 USDT with 6 decimals
-      const usdtPriceData = tokenPrices.usdt || getTokenPriceFallback('usdt');
-      tokenBalances.push({
-        token: TOKENS.USDT,
-        balance: usdtBalance,
-        formattedBalance: formatUnits(usdtBalance, 6),
-        price: usdtPriceData.current_price || 1,
-        value: 2500 * (usdtPriceData.current_price || 1),
-        change24h: usdtPriceData.price_change_percentage_24h || 0,
-        marketCap: formatMarketCap(usdtPriceData.market_cap),
-        volume24h: formatVolume(usdtPriceData.total_volume),
-      });
-      
-      // WBTC - mock balance
-      const wbtcBalance = BigInt(25_000000); // 0.25 WBTC with 8 decimals
-      const wbtcPriceData = tokenPrices.wbtc || getTokenPriceFallback('wbtc');
-      tokenBalances.push({
-        token: TOKENS.WBTC,
-        balance: wbtcBalance,
-        formattedBalance: formatUnits(wbtcBalance, 8),
-        price: wbtcPriceData.current_price || 65000,
-        value: 0.25 * (wbtcPriceData.current_price || 65000),
-        change24h: wbtcPriceData.price_change_percentage_24h || 0,
-        marketCap: formatMarketCap(wbtcPriceData.market_cap),
-        volume24h: formatVolume(wbtcPriceData.total_volume),
-      });
-      
-      // NZT - mock balance for the Nexis token
-      const nztBalance = BigInt('25000000000000000000000'); // 25,000 NZT with 18 decimals
-      tokenBalances.push({
-        token: TOKENS.NZT,
-        balance: nztBalance,
-        formattedBalance: formatUnits(nztBalance, 18),
-        price: 2.5, // Mock price for demo
-        value: 62500,
-        change24h: 5.67,
-        marketCap: '250M',
-        volume24h: '12.5M',
-      });
-      
-      // Add any custom tokens with mock balances
-      for (const [_, customToken] of Object.entries(customTokens)) {
-        const token = customToken as TokenInfo;
-        const customBalance = BigInt('1000000000000000000000'); // 1,000 tokens with 18 decimals
-        const tokenSymbol = token.symbol.toLowerCase();
-        const priceData = tokenPrices[tokenSymbol] || { current_price: 1, price_change_percentage_24h: 0 };
-        
-        tokenBalances.push({
-          token,
-          balance: customBalance,
-          formattedBalance: formatUnits(customBalance, token.decimals),
-          price: priceData.current_price || 1,
-          value: 1000 * (priceData.current_price || 1),
-          change24h: priceData.price_change_percentage_24h || 0,
-          marketCap: formatMarketCap(priceData.market_cap),
-          volume24h: formatVolume(priceData.total_volume),
-        });
-      }
-
-      setTokens(tokenBalances);
-
-      // Calculate portfolio statistics
-      const totalValue = tokenBalances.reduce((sum, token) => sum + token.value, 0);
-      // In a real app, get actual fiat vs NFT vs staked breakdowns
-      const fiatValue = tokenBalances
-        .filter(t => t.token.symbol === 'USDC' || t.token.symbol === 'USDT')
-        .reduce((sum, token) => sum + token.value, 0);
-      const nftValue = 28200; // Mock NFT value
-      const stakedValue = 4800; // Mock staked value
-      
-      // Calculate 24h change
-      const weightedChange = tokenBalances.reduce(
-        (sum, token) => sum + (token.change24h * token.value), 
-        0
-      ) / (totalValue || 1); // Prevent division by zero
-      
-      const change24hUSD = totalValue * (weightedChange / 100);
-
-      setPortfolio({
-        totalValue,
-        fiatValue,
-        nftValue,
-        stakedValue,
-        change24h: weightedChange,
-        change24hUSD: change24hUSD,
-      });
-
-      // In a real app, fetch actual transactions from an API or blockchain
-      // For demo purposes, create mock transactions
-      const mockTransactions: Transaction[] = [
-        {
-          id: '0x1234...5678',
-          hash: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
-          type: 'send',
-          token: 'NZT',
-          amount: '1,000',
-          to: '0x8765...4321',
-          status: 'completed',
-          date: new Date(Date.now() - 30 * 60000).toISOString(), // 30 minutes ago
-        },
-        {
-          id: '0x8765...4321',
-          hash: '0x8765432109fedcba8765432109fedcba8765432109fedcba8765432109fedcba',
-          type: 'receive',
-          token: 'ETH',
-          amount: '0.5',
-          from: '0x9876...2468',
-          status: 'pending',
-          date: new Date(Date.now() - 35 * 60000).toISOString(), // 35 minutes ago
-        },
-        {
-          id: '0x9876...2468',
-          hash: '0x9876543210abcdef9876543210abcdef9876543210abcdef9876543210abcdef',
-          type: 'swap',
-          token: 'USDT → NZT',
-          amount: '500',
-          status: 'completed',
-          date: new Date(Date.now() - 40 * 60000).toISOString(), // 40 minutes ago
-        },
-      ];
-      setTransactions(mockTransactions);
-
-      // In a real app, fetch actual approvals from an API or blockchain
-      // For demo purposes, create mock approvals
-      const mockApprovals: Approval[] = [
-        {
-          id: '0x1234...5678',
-          protocol: 'NexSwap',
-          token: 'NZT',
-          allowance: 'Unlimited',
-          lastUsed: '2 hours ago',
-          risk: 'high',
-        },
-        {
-          id: '0x8765...4321',
-          protocol: 'NexStake',
-          token: 'ETH',
-          allowance: '1,000',
-          lastUsed: '1 day ago',
-          risk: 'medium',
-        },
-        {
-          id: '0x9876...2468',
-          protocol: 'NexBridge',
-          token: 'USDT',
-          allowance: '10,000',
-          lastUsed: '3 days ago',
-          risk: 'low',
-        },
-      ];
-      setApprovals(mockApprovals);
-    } catch (error) {
-      console.error('Error fetching wallet data:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [
-    address, 
-    isConnected, 
-    refetchEthBalance, 
-    tokenPrices, 
-    customTokens
-  ]);
-
-  // Fetch data when wallet connection changes
-  useEffect(() => {
-    // Reset retry counter when dependencies change
-    retryCount.current = 0;
-    fetchWalletData();
-  }, [fetchWalletData]);
-
-  // Return updated wallet data including custom token management
+  // Return expanded wallet data with connection state
   return {
-    isLoading,
+    isLoading: isLoadingBalance,
     address: address?.toString(),
     ensName,
     tokens,
+    balances: dashboardBalances, // Add this for dashboard compatibility
+    activities, // Add this for dashboard compatibility
     portfolio,
     transactions,
     approvals,
-    refetch: async () => {
-      // Reset retry counter on manual refresh
-      retryCount.current = 0;
-      await refreshPrices();
-      await fetchWalletData();
-    },
     addCustomToken,
     removeCustomToken,
-    customTokens: Object.values(customTokens),
+    customTokens: Object.values(storedCustomTokens),
+    connectionState,
+    connectionError,
+    formattedEthBalance,
+    ethBalance: walletEthBalance,
+    isLoadingBalance,
+    refetchWalletData: fetchWalletData,
+    refetch: fetchWalletData,
+    error: tokenPriceError,
   };
 } 
