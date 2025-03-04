@@ -1,126 +1,99 @@
-import { initializeApp, getApps, type FirebaseOptions, type FirebaseApp } from "firebase/app";
-// biome-ignore lint/style/useImportType: <explanation>
+import { initializeApp, getApps, getApp } from 'firebase/app';
 import { 
   getFirestore, 
-  enableIndexedDbPersistence, 
-  Timestamp,
-  type Firestore, 
-  type FirestoreError 
-} from "firebase/firestore";
-import { getAuth, type Auth } from "firebase/auth";
-import { getStorage, type FirebaseStorage } from "firebase/storage";
+  initializeFirestore,
+  enableIndexedDbPersistence,
+  connectFirestoreEmulator,
+  disableNetwork,
+  enableNetwork,
+  type FirestoreSettings
+} from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
+import { getAnalytics } from 'firebase/analytics';
 
-const firebaseConfig: FirebaseOptions = {
+// Firebase configuration
+const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
   authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
   projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
   storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
   messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
-  measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID,
+  measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID
 };
 
-// Initialize Firebase (but only if it hasn't been initialized already)
-// This is important for Next.js which can run this file multiple times
-let app: FirebaseApp | undefined;
-let db: Firestore | undefined;
-let auth: Auth | undefined;
-let storage: FirebaseStorage | undefined;
+// Initialize Firebase only once
+const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 
-// Only initialize once in client side
+// Firestore settings optimized for web apps
+const firestoreSettings: FirestoreSettings = {
+  experimentalAutoDetectLongPolling: true, // Automatically detect best connection method
+  ignoreUndefinedProperties: true, // Ignore undefined fields in documents
+};
+
+// Initialize Firestore with settings
+const db = initializeFirestore(app, firestoreSettings);
+
+// Enable offline persistence
 if (typeof window !== 'undefined') {
-  if (!getApps().length) {
-    app = initializeApp(firebaseConfig);
-  } else {
-    app = getApps()[0];
-  }
+  enableIndexedDbPersistence(db).catch((err) => {
+    if (err.code === 'failed-precondition') {
+      // Multiple tabs open, persistence can only be enabled in one tab at a time
+      console.warn('Firestore persistence disabled: multiple tabs open');
+    } else if (err.code === 'unimplemented') {
+      // The current browser doesn't support persistence
+      console.warn('Firestore persistence not supported by browser');
+    }
+  });
+}
 
-  // Initialize Firestore
-  db = getFirestore(app);
+// Initialize Auth
+const auth = getAuth(app);
 
-  // Enable offline persistence when possible
-  // This must be called before any other Firestore calls
-  // We wrap in try/catch because this can fail in certain browsers
+// Initialize Analytics (only in browser)
+let analytics = null;
+if (typeof window !== 'undefined') {
   try {
-    enableIndexedDbPersistence(db)
-      .then(() => {
-        console.log('Firestore persistence enabled');
-      })
-      .catch((err: FirestoreError) => {
-        if (err.code === 'failed-precondition') {
-          console.warn('Firestore persistence could not be enabled. Multiple tabs open?');
-        } else if (err.code === 'unimplemented') {
-          console.warn('Firestore persistence is not available in this browser');
-        } else {
-          console.error('Error enabling Firestore persistence:', err);
-        }
-      });
-  } catch (err: unknown) {
-    console.warn('Error enabling Firestore persistence:', err);
+    analytics = getAnalytics(app);
+  } catch (err) {
+    console.warn('Analytics initialization failed:', err);
   }
-
-  // Initialize Auth
-  auth = getAuth(app);
-  
-  // Initialize Storage
-  storage = getStorage(app);
 }
 
-// Export services
-export { db, auth, storage };
+// Network state management
+export const networkControls = {
+  async enableNetwork() {
+    try {
+      await enableNetwork(db);
+    } catch (err) {
+      console.error('Error enabling Firestore network:', err);
+    }
+  },
+  async disableNetwork() {
+    try {
+      await disableNetwork(db);
+    } catch (err) {
+      console.error('Error disabling Firestore network:', err);
+    }
+  }
+};
 
-// Helper function to check if we're in the browser
-export function isBrowser(): boolean {
-  return typeof window !== 'undefined';
+// Connect to emulator in development
+if (process.env.NODE_ENV === 'development') {
+  try {
+    connectFirestoreEmulator(db, 'localhost', 8080);
+  } catch (err) {
+    console.warn('Firestore emulator connection failed:', err);
+  }
 }
 
-// Type for Firestore document with data
-interface FirestoreDocument {
-  id: string;
-  exists: boolean;
-  data: () => FirestoreData;
-}
+export { app, db, auth, analytics };
 
-// Type for Firestore document data with possible timestamp fields
-interface FirestoreData {
-  [key: string]: unknown;
-  createdAt?: Timestamp;
-  updatedAt?: Timestamp;
-  lastUpdatedAt?: Timestamp;
-  lastTransactionAt?: Timestamp;
-}
+// Helper to check if Firebase is initialized
+export const isFirebaseInitialized = () => getApps().length > 0;
 
-// Helper for converting Firestore data (timestamps, etc)
-export function convertFirestoreData<T>(doc: FirestoreDocument | null | undefined): T | null {
-  if (!doc || !doc.exists) {
-    return null;
-  }
-  
-  const data = doc.data();
-  const result: Record<string, unknown> = {
-    id: doc.id,
-    ...data
-  };
-  
-  // Convert Firestore Timestamps to Date objects if they exist
-  if (data.createdAt && 'toDate' in data.createdAt) {
-    result.createdAt = data.createdAt.toDate();
-  }
-  
-  if (data.updatedAt && 'toDate' in data.updatedAt) {
-    result.updatedAt = data.updatedAt.toDate();
-  }
-  
-  if (data.lastUpdatedAt && 'toDate' in data.lastUpdatedAt) {
-    result.lastUpdatedAt = data.lastUpdatedAt.toDate();
-  }
-  
-  if (data.lastTransactionAt && 'toDate' in data.lastTransactionAt) {
-    result.lastTransactionAt = data.lastTransactionAt.toDate();
-  }
-  
-  return result as T;
-}
+// Helper to check if we're in the browser
+export const isBrowser = () => typeof window !== 'undefined';
 
 // Export the Firebase app as the default export
 export default app; 
