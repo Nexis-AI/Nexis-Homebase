@@ -1,12 +1,13 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { 
-  getFirestore, 
+  getFirestore,
   initializeFirestore,
   enableIndexedDbPersistence,
   connectFirestoreEmulator,
   disableNetwork,
   enableNetwork,
-  type FirestoreSettings
+  type FirestoreSettings,
+  type Firestore
 } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { getAnalytics } from 'firebase/analytics';
@@ -25,16 +26,35 @@ const firebaseConfig = {
 // Initialize Firebase only once
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 
+// Check if Firebase is already initialized
+const isAlreadyInitialized = getApps().length > 0;
+
 // Firestore settings optimized for web apps
 const firestoreSettings: FirestoreSettings = {
   experimentalAutoDetectLongPolling: true, // Automatically detect best connection method
   ignoreUndefinedProperties: true, // Ignore undefined fields in documents
 };
 
-// Initialize Firestore with settings
-const db = initializeFirestore(app, firestoreSettings);
+// Initialize Firestore with settings (only if not already initialized)
+let db: Firestore;
+if (!isAlreadyInitialized) {
+  // New initialization
+  db = initializeFirestore(app, firestoreSettings);
+  
+  // Connect to emulator in development (only during initial setup)
+  if (process.env.NODE_ENV === 'development') {
+    try {
+      connectFirestoreEmulator(db, 'localhost', 8080);
+    } catch (err) {
+      console.warn('Firestore emulator connection failed:', err);
+    }
+  }
+} else {
+  // Already initialized, just get the instance
+  db = getFirestore(app);
+}
 
-// Enable offline persistence
+// Enable offline persistence (safely try)
 if (typeof window !== 'undefined') {
   enableIndexedDbPersistence(db).catch((err) => {
     if (err.code === 'failed-precondition') {
@@ -43,6 +63,9 @@ if (typeof window !== 'undefined') {
     } else if (err.code === 'unimplemented') {
       // The current browser doesn't support persistence
       console.warn('Firestore persistence not supported by browser');
+    } else {
+      // Other persistence errors (such as already enabled)
+      console.warn('Firestore persistence initialization issue:', err.message);
     }
   });
 }
@@ -77,15 +100,6 @@ export const networkControls = {
     }
   }
 };
-
-// Connect to emulator in development
-if (process.env.NODE_ENV === 'development') {
-  try {
-    connectFirestoreEmulator(db, 'localhost', 8080);
-  } catch (err) {
-    console.warn('Firestore emulator connection failed:', err);
-  }
-}
 
 export { app, db, auth, analytics };
 
