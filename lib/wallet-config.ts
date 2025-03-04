@@ -108,8 +108,9 @@ export const metadata = {
 
 // Configure RPC with production-ready connection settings
 const createTransport = (urls: string[]) => {
-  return fallback(
-    urls.map(url => http(url, {
+  // Create http transports for each URL
+  const transports = urls.map(url => 
+    http(url, {
       timeout: 10000, // 10s timeout for more reliable connections
       fetchOptions: {
         mode: 'cors',
@@ -121,61 +122,14 @@ const createTransport = (urls: string[]) => {
         },
         priority: 'high',
       },
-      // Enhanced retry mechanism for production
+      // These are the valid options for http transport in viem 2.23.5
       retryCount: 3,
       retryDelay: 1000, // 1s delay between retries
-      // Better error handling for production
-      onError: (error) => {
-        // Log minimal error info to avoid sensitive data leakage
-        const errorMsg = error.message || 'Unknown RPC error';
-        console.warn(`RPC connection issue: ${errorMsg.substring(0, 100)}${errorMsg.length > 100 ? '...' : ''}`);
-        
-        // Don't retry on explicit rejection errors
-        if (errorMsg.includes('User rejected') || errorMsg.includes('user rejected')) {
-          return false;
-        }
-        
-        // Retry on network or timeout errors
-        return true;
-      }
-    })),
-    {
-      // Production-optimized fallback settings
-      maxRetries: 4,
-      fallbackThreshold: 2,
-      onTransportError: ({error, url}: {error: Error, url?: string}) => {
-        if (url) {
-          const hostname = url?.includes('://') ? new URL(url).hostname : url;
-          
-          // Log failed provider with minimal details
-          console.warn(`RPC endpoint unavailable: ${hostname}`);
-          
-          // Store failed provider in sessionStorage to track reliability
-          if (typeof window !== 'undefined') {
-            try {
-              const failureMap = JSON.parse(sessionStorage.getItem('rpc-failures') || '{}');
-              failureMap[hostname] = (failureMap[hostname] || 0) + 1;
-              sessionStorage.setItem('rpc-failures', JSON.stringify(failureMap));
-              
-              // If we have multiple failures, report analytics if available
-              if (failureMap[hostname] > 3 && window.gtag) {
-                try {
-                  window.gtag('event', 'rpc_failure', {
-                    endpoint: hostname,
-                    count: failureMap[hostname]
-                  });
-                } catch (e) {
-                  // Ignore analytics errors
-                }
-              }
-            } catch (e) {
-              // Ignore storage errors
-            }
-          }
-        }
-      }
-    }
+    })
   );
+  
+  // Return a fallback transport
+  return fallback(transports);
 };
 
 // Create public client with production-optimized settings
@@ -239,7 +193,17 @@ export const wagmiConfig = defaultWagmiConfig({
   ssr: true,
 });
 
-// Add type declarations for window extensions
+// Add type declarations for injected providers
+interface InjectedProvider {
+  [key: string]: unknown;
+}
+
+interface WalletProvider {
+  name: string;
+  provider: InjectedProvider;
+}
+
+// Update window extensions type declarations
 declare global {
   interface Window {
     ethereum?: {
@@ -249,16 +213,90 @@ declare global {
     };
     _hasWalletExtension?: boolean;
     _isMetaMask?: boolean;
-    _walletProviders?: Array<{name: string, provider: unknown}>;
-    gtag?: (command: string, action: string, params?: Record<string, unknown>) => void; // For Google Analytics
+    _walletProviders?: WalletProvider[];
+    gtag?: (command: string, action: string, params?: Record<string, unknown>) => void;
+    [key: string]: unknown;
   }
   interface WindowEventMap {
     'eip6963:announceProvider': CustomEvent<{
       info: { name: string; },
-      provider: unknown;
+      provider: InjectedProvider;
     }>;
   }
 }
+
+// Add Keplr detection and handling
+const detectWallets = () => {
+  if (typeof window === 'undefined') return false;
+
+  // Initialize wallet providers array if not exists
+  window._walletProviders = window._walletProviders || [];
+  
+  // Check for injected providers in a specific order
+  const checkProvider = (providerName: string): boolean => {
+    const provider = window[providerName] as InjectedProvider | undefined;
+    if (provider) {
+      window._walletProviders?.push({
+        name: providerName,
+        provider
+      });
+      return true;
+    }
+    return false;
+  };
+
+  // Check wallets in priority order
+  const walletPriority = ['keplr', 'ethereum', 'phantom', 'solflare'] as const;
+  walletPriority.forEach(checkProvider);
+
+  // Listen for EIP-6963 announcements
+  window.addEventListener('eip6963:announceProvider', (event) => {
+    const { info, provider } = event.detail;
+    
+    // Don't add duplicate providers
+    if (window._walletProviders && 
+        !window._walletProviders.some(p => p.name === info.name)) {
+      window._walletProviders.push({
+        name: info.name,
+        provider
+      });
+    }
+  });
+
+  return (window._walletProviders?.length ?? 0) > 0;
+};
+
+// Initialize wallet detection
+if (typeof window !== 'undefined') {
+  // Run detection on load
+  window.addEventListener('load', () => {
+    setTimeout(detectWallets, 500);
+  });
+  
+  // Run detection immediately in case window is already loaded
+  detectWallets();
+}
+
+/**
+ * IMPORTANT NOTE: WalletConnect Disconnection Handling
+ * 
+ * There is a known issue with WalletConnect where the disconnect method may not exist
+ * or may be located in different places depending on the version and implementation.
+ * 
+ * We've implemented a patch in lib/wallet-disconnect-patch.ts to handle this issue:
+ * - It tries multiple methods to disconnect gracefully (disconnect, close, reset, etc.)
+ * - It falls back to localStorage cleanup if no disconnect method is available
+ * - It properly handles errors during disconnection
+ * 
+ * When disconnecting a WalletConnect session, use the safeDisconnectWalletConnect utility:
+ * 
+ * ```
+ * import { safeDisconnectWalletConnect } from '../lib/wallet-disconnect-patch';
+ * safeDisconnectWalletConnect(walletConnectProvider);
+ * ```
+ * 
+ * This ensures consistent and reliable disconnection across different WalletConnect versions.
+ */
 
 // Track wallet connection errors for analytics
 export function trackWalletError(errorType: string, message: string) {
@@ -296,76 +334,3 @@ export function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<
     );
   });
 }
-
-// Preload the wallet detection
-if (typeof window !== 'undefined') {
-  // Enhanced wallet detection with EIP-6963 support
-  const detectWallets = () => {
-    // Store detected wallets
-    window._walletProviders = window._walletProviders || [];
-    
-    // Check for MetaMask or similar injected providers
-    const hasInjected = typeof window.ethereum !== 'undefined';
-    
-    // Specific check for MetaMask
-    const isMetaMask = hasInjected && (
-      window.ethereum?.isMetaMask || 
-      (window.ethereum?.providers && 
-       window.ethereum?.providers.some((p: {isMetaMask?: boolean}) => p?.isMetaMask))
-    );
-    
-    // Expose for debugging
-    window._hasWalletExtension = hasInjected;
-    window._isMetaMask = isMetaMask;
-    
-    console.log('Wallet detection:', { 
-      hasInjectedProvider: hasInjected,
-      isMetaMask: isMetaMask
-    });
-    
-    return hasInjected;
-  };
-  
-  // Listen for EIP-6963 wallet announcements
-  window.addEventListener('eip6963:announceProvider', (event) => {
-    const { info, provider } = event.detail;
-    
-    // Store the provider information
-    window._walletProviders = window._walletProviders || [];
-    window._walletProviders.push({
-      name: info.name,
-      provider: provider
-    });
-    
-    console.log(`EIP-6963 wallet detected: ${info.name}`);
-    window._hasWalletExtension = true;
-  });
-  
-  // Run detection immediately and after window loads
-  detectWallets();
-  window.addEventListener('load', () => {
-    // Run detection again after window loads to catch late-injected wallets
-    setTimeout(detectWallets, 500);
-  });
-}
-
-/**
- * IMPORTANT NOTE: WalletConnect Disconnection Handling
- * 
- * There is a known issue with WalletConnect where the disconnect method may not exist
- * or may be located in different places depending on the version and implementation.
- * 
- * We've implemented a patch in lib/wallet-disconnect-patch.ts to handle this issue:
- * - It tries multiple methods to disconnect gracefully (disconnect, close, reset, etc.)
- * - It falls back to localStorage cleanup if no disconnect method is available
- * - It properly handles errors during disconnection
- * 
- * When disconnecting a WalletConnect session, use the safeDisconnectWalletConnect utility:
- * 
- * ```
- * import { safeDisconnectWalletConnect } from '../lib/wallet-disconnect-patch';
- * safeDisconnectWalletConnect(walletConnectProvider);
- * ```
- * 
- * This ensures consistent and reliable disconnection across different WalletConnect versions.
- */ 
